@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{#- The mark as favicon; it switches its dark parts to light ones in a dark colour scheme. #}
+{%- block extrahead %}
+<link rel="icon" type="image/svg+xml" href="{{ 'img/hikaripb-mark.svg'|url }}" />
+{%- endblock %}
+
+{#- The logo instead of the site name at the top of the side bar, in the colours of the colour scheme. #}
+{%- block site_name %}
+<a href="{{ nav.homepage.url|url }}">
+  <picture>
+    <source srcset="{{ 'img/hikaripb-logo-dark.svg'|url }}" media="(prefers-color-scheme: dark)" />
+    <img src="{{ 'img/hikaripb-logo.svg'|url }}" class="logo" alt="{{ config.site_name }}" />
+  </picture>
+</a>
+{%- endblock %}

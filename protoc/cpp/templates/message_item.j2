@@ -1,0 +1,74 @@
+{# Included once per struct field by message.j2: the declaration of its storage. The macros that a configuration can
+   override (type, item type, callback type, callback enabled) are in message_macros.j2. #}
+{% set msgprefix = fullname | replace('::', '_') %}
+{% if item.rpt%} {# Repeated field #}
+{% if item.c_type == "pb_u8*"%} {# Repeated bytes field: array of {length, data} structs, like the non repeated bytes field #}
+#if {{msgprefix}}_{{item.name}}_callback_en {{ "&& !" + msgprefix + "_" + item.group + "_callback_en" if item.group }} && {{ P }}_CALLBACK
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{msgprefix}}_{{item.name}}_cbtype {{item.name}};
+#elif defined({{msgprefix}}_{{item.name}}_count) && defined({{msgprefix}}_{{item.name}}_size)
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    pb_u32 count;
+    struct{
+        pb_u32 length;
+        pb_u8 data [{{msgprefix}}_{{item.name}}_size];
+    } item [{{msgprefix}}_{{item.name}}_count];
+}{{item.name}};
+#else 
+#error "Neither count and size or callback defined for {{msgprefix}}_{{item.name}}"
+#endif
+{% else %} {# Repeated non bytes field #}
+#if {{msgprefix}}_{{item.name}}_callback_en {{ "&& !" + msgprefix + "_" + item.group + "_callback_en" if item.group }} && {{ P }}_CALLBACK
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{msgprefix}}_{{item.name}}_cbtype {{item.name}};
+#elif defined({{msgprefix}}_{{item.name}}_count)
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    pb_u32 count;
+    {{msgprefix}}_{{item.name}}_ctype item [{{msgprefix}}_{{item.name}}_count];
+}{{item.name}};
+#else 
+#error "Neither count or callback defined for {{msgprefix}}_{{item.name}}"
+#endif
+{% endif %}
+{% else %} {# Non repeated field #}
+{% if item.c_type == "pb_u8*"%} {# Non repeated bytes field #}
+#if {{msgprefix}}_{{item.name}}_callback_en {{ "&& !" + msgprefix + "_" + item.group + "_callback_en" if item.group }} && {{ P }}_CALLBACK
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{msgprefix}}_{{item.name}}_cbtype {{item.name}};
+#elif defined({{msgprefix}}_{{item.name}}_size)
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    pb_u32 length;
+    pb_u8 data [{{msgprefix}}_{{item.name}}_size];
+}{{item.name}};
+#else 
+#error "Neither size or callback defined for {{msgprefix}}_{{item.name}}"
+#endif
+{% else %} {# Non repeated non bytes field #}
+#if {{msgprefix}}_{{item.name}}_callback_en {{ "&& !" + msgprefix + "_" + item.group + "_callback_en" if item.group }} && {{ P }}_CALLBACK
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{msgprefix}}_{{item.name}}_cbtype {{item.name}};
+#else
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{msgprefix}}_{{item.name}}_ctype {{item.name}};
+#endif
+{% endif %}
+{% endif %}

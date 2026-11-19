@@ -1,0 +1,327 @@
+{% set msgprefix = fullname | replace('::', '_') %}
+
+{# the macros of the fields, then the callbacks that the application implements: both before the struct, as its static
+   functions use them (a callback is declared at namespace scope, where the application defines it) #}
+{% for item in descriptors %}
+{% include "message_macros.j2" %}
+
+{% endfor %}
+{% for k in members.keys() if k != "" %}
+#ifndef {{msgprefix}}_{{k}}_callback_en
+#define {{msgprefix}}_{{k}}_callback_en 0
+#endif
+{% endfor %}
+{% if members | length > 0 %}
+#if !{{msgprefix}}_writeonly
+{% for k in members.keys() if k != "" %}
+#if {{msgprefix}}_{{k}}_callback_en && {{ P }}_CALLBACK
+/** Decode the oneof {{k}} (implemented by the application, enabled with {{msgprefix}}_{{k}}_callback_en) */
+bool {{msgname}}_{{k}}_callback({{ p }}::Decoder<>& decoder, const {{ p }}::ItemDescriptor* dsc, pb_u16 len, void** data);
+#endif
+{% endfor %}
+{% for item in descriptors %}
+#if {{msgprefix}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+/** Decode the field {{item.name}} (implemented by the application, enabled with {{msgprefix}}_{{item.name}}_callback_en) */
+bool {{msgname}}_{{item.name}}_callback({{ p }}::Decoder<>& decoder, const {{ p }}::ItemDescriptor* dsc, pb_u16 len, void** data);
+#endif
+{% endfor %}
+#endif
+{% endif %}
+
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+struct {{msgname}} : public {{ p }}::MessageBase {
+{{proxy}}
+
+{# Tag constants for each item in the message #}
+{% for item in descriptors %}
+static constexpr pb_u32 TAG_{{item.name|upper}} = {{item.tag}}U;
+{% endfor %}
+
+#if !{{msgprefix}}_writeonly
+{# Message ID for bindings#}
+    static constexpr pb_msgid MSGID = static_cast<pb_msgid>(::{{ p }}::MessageId::MSG_ID_{{msgprefix}});
+{# presence array to track optional fields #}
+    pb_u8 presence[{{presence_size}}];
+{# Define the members of the message in the order of their alignment, smallest first (see
+   common.ProtoMessage.get_layout), so that the struct has as little padding as possible; a oneof (its tag and its
+   union) is one unit #}
+{% for unit in layout %}
+{% set k = unit.group %}
+
+{% if k != "" %} {# Union items  #}
+#if {{msgprefix}}_{{k}}_callback_en && {{ P }}_CALLBACK
+{% for item in unit.fields %}
+#if {{msgprefix}}_{{item.name}}_callback_en 
+#error "Callback used for union item {{item.name}} as well as its parent {{k}}. This is not supported."
+#endif
+{% endfor %}
+#endif
+    pb_u32 {{k}}_tag;
+    union {{k}}_t {
+{% endif %} {# End of Union items  #}
+
+{# define each member #}
+{% for item in unit.fields %}
+    {%+ include "message_item.j2" %}
+{% endfor %}
+
+{% if k != "" %} {# Union items  #}
+    }
+#if {{msgprefix}}_{{k}}_callback_en && {{ P }}_CALLBACK
+*
+#endif
+{{k}};
+{% endif %} {# End of Union items  #}
+
+{% endfor %} 
+
+{# Define methods to check for the presence of optional fields #}
+{% for o in optionals %}
+bool has_{{o.name}}() const{
+{% if o.group == "" %} {# If the optional field is not part of a oneof group, check the presence array #}
+    return isUsed(static_cast<pb_tag>(TAG_{{o.name|upper}}));
+{% else %} {# If the optional field is part of a oneof group, check the tag of the group #}
+    return {{o.group}}_tag == TAG_{{o.name|upper}};
+{% endif %}
+}
+{% endfor %} 
+{# Define methods to check for the presence of oneof fields #}
+{% for k,v in members.items() %}
+{% if k != "" %}
+bool has_{{k}}() const{
+    return {{k}}_tag != 0U;
+}
+{% endif %}
+{% endfor %} 
+
+/** Decode the message from the decoder */
+{{ P }}_INLINE_ATTR void decode({{ p }}::Decoder<> &d){ d.template decode<{{msgname}}>(this); }
+
+/** Clear the message */
+static {{ P }}_OPTIMIZE_ATTR void clear ({{ p }}::MessageBase* base) {
+    {{msgname}}* msg = static_cast<{{msgname}}*>(base);
+{# the presence bitmap is zeroed byte-by-byte when it is short, in a loop when a large field number makes it long #}
+{% if presence_size > 8 %}
+    for (pb_u32 i = 0U; i < {{presence_size}}U; i++) {
+        msg->presence[i] = 0U;
+    }
+{% else %}
+{% for i in range(presence_size) %}
+    msg->presence[{{i}}] = 0U;
+{% endfor %}
+{% endif %}
+{% for k,v in members.items() %}
+{% if k != "" %}
+    msg->{{k}}_tag = 0U;
+{% endif %}
+{% for item in v %}
+{% if item.rpt%}
+#if {{msgprefix}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = nullptr;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}}.count = 0U;
+#endif
+{% else %}
+{% if item.c_type == "pb_u8*"%}
+#if {{msgprefix}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = nullptr;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}}.length = 0U;
+#endif
+{% elif item.name not in optionals | map(attribute='name') and item.type != (p ~ "::ItemType::MESSAGE")%}
+#if {{msgprefix}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = nullptr;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}} = static_cast<{{msgprefix}}_{{item.name}}_ctype>(0);
+#endif
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endfor %} 
+
+} 
+
+/** Get the item descriptor for a given tag */
+static {{ P }}_OPTIMIZE_ATTR const {{ p }}::ItemDescriptor* getItemDescriptor(pb_u32 tag){
+{% if not descriptors %}
+    {# no field: no descriptor table, as a zero-length array is not valid C++ #}
+    (void)tag;
+    return nullptr;
+}
+{% else %}
+    {# one static descriptor entry per field, in field number order: the consecutive-tag groups below index it #}
+    static const {{ p }}::ItemDescriptor desc[{{descriptors|length}}] = {
+    {% for item in descriptors | sort(attribute='tag') %}
+    {
+        static_cast<pb_u16>(PB_OFFSETOF({{msgname}}, {{item.name if item.group == "" else item.group + "_tag"}})),
+        static_cast<pb_msgid>({{item.c_type + '::MSGID' if item.type == (p ~ '::ItemType::MESSAGE') else 0}}),
+        static_cast<pb_u8>({{msgprefix}}_{{item.name}}_{{ p }}type),
+        {{'true' if item.rpt else 'false'}},
+        {{'true' if item.group != "" else 'false'}},
+#if ({{msgprefix}}_{{item.name}}_callback_en {{"|| " + msgprefix + "_" + item.group + "_callback_en" if item.group != ""}}) && {{ P }}_CALLBACK
+        true,
+{% if item.group != "" %}
+#if {{msgprefix}}_{{item.group}}_callback_en && {{ P }}_CALLBACK
+        {{ p }}::ItemDescriptor::Which(&{{msgname}}_{{item.group}}_callback),
+#else
+        {{ p }}::ItemDescriptor::Which(&{{msgname}}_{{item.name}}_callback),
+#endif
+{% else %}
+        {{ p }}::ItemDescriptor::Which(&{{msgname}}_{{item.name}}_callback),
+{% endif %}
+#else
+        false,
+        {{ p }}::ItemDescriptor::Which({{ p }}::ItemDescriptor::Fixed{
+{% if item.c_type == "pb_u8*"%}
+#ifdef {{msgprefix}}_{{item.name}}_size
+            static_cast<pb_u16>({{msgprefix}}_{{item.name}}_size),
+#else
+{% endif %}
+            static_cast<pb_u16>(sizeof({{msgprefix}}_{{item.name}}_ctype)),
+{% if item.c_type == "pb_u8*"%}
+#endif
+{% endif %}
+#ifdef {{msgprefix}}_{{item.name}}_count
+            static_cast<pb_u16>({{msgprefix}}_{{item.name}}_count),
+#else
+            0U,
+#endif
+        }),
+#endif
+    },
+    {% endfor %} 
+    };
+
+    pb_u32 idx = tag - 1U;
+    {% for offset, group in tag_groups.items() %}
+    {% if group|length == 1 %}
+    if(idx == {{group[0]}}U) {
+        return &desc[idx{{' - ' + (group[0] - offset)|string + 'U' if group[0] else ''}}];
+    }
+    {% else %}
+    {# Handle group with multiple tags. if begins with 0, remove the first part of the condition #}
+    if({{'idx >= ' + group[0]|string +  'U && ' if group[0] else ''}}idx <= {{group[-1]}}U) {
+        return &desc[idx{{' - ' + (group[0] - offset)|string + 'U' if group[0] else ''}}];
+    }
+    {% endif %}
+    {% endfor %}
+
+    return nullptr;
+}
+{% endif %}
+
+/** Get name for a given tag */
+static const char* getTagName(pb_u32 tag){
+{% if not descriptors %}
+    (void)tag;
+    return "unknown tag";
+}
+{% else %}
+    const char* name;
+
+    switch(tag){
+{% for item in descriptors %}
+    case {{item.tag}}U: name = "{{item.name}}"; break;
+{% endfor %}
+    default: name = "unknown tag"; break;
+    }
+    return name;
+}
+{% endif %}
+
+#if {{ P }}_PRINT_ENABLE
+
+{%set item_map = {"pb_u32": P ~ "_U32_F", "pb_u16": P ~ "_U16_F", "pb_u8": P ~ "_U8_F", "bool": P ~ "_U8_F", "pb_s32": P ~ "_S32_F"}%}
+/** Print the message contents */
+void print(bool top = true, pb_u32 indent = 0U) const{
+    {# The empty message does not use the indentation: no value is stored that is not read #}
+    {% set uses_indent = (descriptors | length > 0) or (members.keys() | reject('equalto', '') | list | length > 0) %}
+    {# Print message name only for top level messages #}
+    if (top) {
+        {{ P }}_PRINTLN("{{msgname}}:");
+        {% if uses_indent %}
+        indent += static_cast<pb_u32>({{ P }}_INDENT_SIZE);
+        {% endif %}
+    }
+    {% if not uses_indent %}
+    (void)indent;
+    {% endif %}
+
+    {% for k, v in members.items()%}
+    {% if k != "" %}
+#if {{msgprefix}}_{{k}}_callback_en && {{ P }}_CALLBACK
+    for(pb_u32 space = 0U; space < indent; space++){ {{ P }}_PRINT(" "); }
+    {{ P }}_PRINTLN("{{k}}: callback");
+#endif
+    {% endif %}
+    {% endfor %}
+
+    {# Iterate over all items #}
+    {% for item in descriptors %}
+
+    {# Check if the item is optional #}
+    {%if item.tag in optionals|map(attribute='tag')%}
+    if(has_{{item.name}}()){
+    {%endif%}
+
+    {# Check if callback is enabled for the item #}
+#if !(( {% if item.group != ""%} {{msgprefix}}_{{item.group}}_callback_en || {% endif %} {{msgprefix}}_{{item.name}}_callback_en) && {{ P }}_CALLBACK)
+    {
+    {# Print the item name if it's not a byte array or a nested message #}
+    {% if item.c_type != "pb_u8*" and item.type != (p ~ "::ItemType::MESSAGE")%}
+    for(pb_u32 space = 0U; space < indent; space++){ {{ P }}_PRINT(" "); }
+    {{(P ~ "_PRINTLN") if item.rpt else (P ~ "_PRINT")}}("{{item.name}}: ");
+    {% endif %}
+    {# Determine the indentation for nested items #}
+    {% if item.rpt or item.c_type == "pb_u8*" or item.type == (p ~ "::ItemType::MESSAGE")%}
+    pb_u32 indent_int = indent + static_cast<pb_u32>({{ P }}_INDENT_SIZE);
+    {% endif%}
+    {# Handle repeated items #}
+    {% if item.rpt %} 
+    for(pb_u32 i = 0U; i < {{item.name}}.count; i++) { 
+    {% endif %}
+    {# Print based on the item type #}
+    {% if item.c_type == "pb_u8*"%}
+    for(pb_u32 space = 0U; space < indent; space++) { {{ P }}_PRINT(" "); } {{ P }}_PRINTLN("{{item.name}}: "); 
+    ::{{ p }}::print_{{item.array_type}}({{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt}}.data, static_cast<pb_u16>({{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt}}.length), indent_int);
+    {%elif item.type == (p ~ '::ItemType::MESSAGE')%}
+    for(pb_u32 space = 0U; space < indent; space++) { {{ P }}_PRINT(" "); } {{ P }}_PRINTLN("{{item.name}}: "); 
+    {{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}}.print(false, indent_int);
+    {%elif item.c_type in item_map.keys()%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%" {{item_map[item.c_type]}}, {{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}});
+    {%elif item.c_type == "float"%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%" {{ P }}_FLOAT_F, static_cast<double>({{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}}));
+    {%else%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%s", to_string({{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}}));
+    {%endif%}
+
+    {% if item.rpt%} } {% endif%}
+    }
+#else
+    {# If callback is enabled, just indicate that in the printout #}
+    for(pb_u32 space = 0U; space < indent; space++){ {{ P }}_PRINT(" "); }
+    {{ P }}_PRINTLN("{{item.name}}: callback");
+#endif
+
+    {%if item.tag in optionals|map(attribute='tag')%} } {%endif%}
+    {% endfor %}
+}
+
+#endif // {{ P }}_PRINT_ENABLE
+#endif // !{{msgprefix}}_writeonly
+
+};
+
+{# the descriptors hold the offsets and the sizes of the fields in 16 bits #}
+static_assert(sizeof({{msgname}}) <= 0xFFFFU, "{{msgname}} is larger than 65535 bytes, the descriptors count in 16 bits");

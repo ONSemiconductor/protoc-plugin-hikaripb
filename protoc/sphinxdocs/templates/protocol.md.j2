@@ -1,0 +1,21 @@
+{{ top }} Protocol
+
+{% if messages %}
+{{ top }}# Messages
+
+{% for message in messages %}
+{{ message }}
+
+{% endfor %}
+{% endif %}
+{% if enums %}
+{{ top }}# Enumerations
+
+{% for enum in enums %}
+{{ enum }}
+
+{% endfor %}
+{% endif %}
+{% if not messages and not enums %}
+The file defines no messages and no enumerations.
+{% endif %}

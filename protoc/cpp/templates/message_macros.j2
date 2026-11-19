@@ -1,0 +1,26 @@
+{# The macros of a field that a configuration can override: the type of its storage, the item type of its descriptor, the
+   type of its callback and whether it has one. They are defined before the struct of the message, whose static
+   functions read them. #}
+{% set msgprefix = fullname | replace('::', '_') %}
+#ifndef {{msgprefix}}_{{item.name}}_ctype
+#define {{msgprefix}}_{{item.name}}_ctype {{item.c_type}}
+#endif
+#ifndef {{msgprefix}}_{{item.name}}_{{ p }}type
+#define {{msgprefix}}_{{item.name}}_{{ p }}type {{item.type}}
+#endif
+#ifndef {{msgprefix}}_{{item.name}}_cbtype
+#define {{msgprefix}}_{{item.name}}_cbtype void*
+#endif
+#ifndef {{msgprefix}}_{{item.name}}_callback_en
+#define {{msgprefix}}_{{item.name}}_callback_en 0
+#endif
+
+{% if item.c_type == "float" %}
+#if !{{ P }}_ENABLE_FLOAT
+#error "{{msgprefix}}_{{item.name}} is a float, define {{ P }}_ENABLE_FLOAT as 1"
+#endif
+{% elif item.rpt and item.c_type == "pb_u8*" %}
+#if !{{ P }}_ENABLE_REPEATED_BYTES
+#error "{{msgprefix}}_{{item.name}} is a repeated string or bytes, define {{ P }}_ENABLE_REPEATED_BYTES as 1"
+#endif
+{% endif %}

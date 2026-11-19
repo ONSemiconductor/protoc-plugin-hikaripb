@@ -1,0 +1,79 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_bindings.h
+ * @brief   Generated protocol message binding helpers.
+ *
+ */
+
+#ifndef {{ P }}_BINDINGS_H
+#define {{ P }}_BINDINGS_H
+
+#include "{{ incpath }}{{ p }}_defines.h"
+#include "{{ cfgpath }}{{ p }}_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+{# every message defaults to writeonly=false unless <prefix>_config.h says otherwise #}
+{% for item in data %}
+#ifndef {{item}}_writeonly
+#define {{item}}_writeonly 0
+#endif
+{% endfor %}
+
+
+// unique identifier of message
+{# writeonly messages get no ID: they're never looked up by getMessageDescriptor(), only encoded #}
+enum {{ p }}_MessageId {
+{% for item in data %}
+#if !{{item}}_writeonly
+    {{item}}_ID,
+#endif
+{% endfor %}
+};
+
+/**
+ * @brief get descriptor of a message, with it's associated functions
+ */
+const struct {{ p }}_MessageDescriptor* {{ p }}_getMessageDescriptor(pb_msgid id);
+
+/**
+ * @brief get name of a message in readable format
+ */
+const char* {{ p }}_getMessageName(pb_msgid id);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif //{{ P }}_BINDINGS_H

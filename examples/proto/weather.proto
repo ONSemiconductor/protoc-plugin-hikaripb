@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+// Weather station telemetry. A station sends a Report with the readings of its
+// sensors; the C, C++ and Python examples of this folder all use this schema.
+package weather;
+
+// Unit of a temperature reading.
+enum Unit {
+  // Degrees Celsius.
+  UNIT_CELSIUS = 0;
+  // Degrees Fahrenheit.
+  UNIT_FAHRENHEIT = 1;
+}
+
+// Measurement of one sensor.
+message Reading {
+  // Identifier of the sensor on the station.
+  uint32 sensor_id = 1;
+  // Temperature in tenths of a degree, negative below zero.
+  sint32 temperature = 2;
+  // Unit of the temperature.
+  Unit unit = 3;
+  // Relative humidity in percent. Only present when the sensor has a hygrometer.
+  optional uint32 humidity = 4;
+  // Short description of the position of the sensor, e.g. "roof".
+  string label = 5;
+}
+
+// Everything a station sends in one transmission.
+message Report {
+  // Name of the station.
+  string station = 1;
+  // Readings of all sensors, in the order they were taken.
+  repeated Reading readings = 2;
+  // State of the station: an error code or a free-text note, never both.
+  oneof status {
+    // Error code reported by the firmware of the station.
+    uint32 error_code = 3;
+    // Free-text note written by an operator.
+    string note = 4;
+  }
+}

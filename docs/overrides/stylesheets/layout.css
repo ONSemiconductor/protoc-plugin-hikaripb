@@ -1,0 +1,21 @@
+/* The theme caps the page at 800px, which leaves half of a wide window empty. */
+.wy-nav-content {
+  max-width: 1400px;
+}
+
+/* The logo at the top of the side bar. */
+.wy-side-nav-search > a img.logo {
+  width: 190px;
+  margin: 0.4em auto 0.8em;
+}
+
+/* The theme does not wrap table cells, so a long description makes the table scroll sideways. */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+  white-space: normal;
+}
+
+/* The theme's footer only holds a "Built with MkDocs" line here. */
+.rst-content footer {
+  display: none;
+}

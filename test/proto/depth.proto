@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package depthpkg;
+
+// Chain of embedded messages used to exercise the generated decoder's
+// message-nesting depth limit (see {{PREFIX}}_DEC_MAX_DEPTH / HIKARIPB_DEC_MAX_DEPTH,
+// both overridden to 12 in the test configs). DepthL0 -> DepthL1 -> ... -> DepthL13
+// gives 14 levels total: populating only DepthL0..DepthL9 (10 levels) exercises
+// "at least 10 embedded messages" successfully; populating all the way to
+// DepthL13 (14 levels) exceeds the configured max and must trigger
+// DecodeError::DECODER_DEPTH_EXCEEDED.
+message DepthL13 {
+  uint32 value = 1;
+}
+
+message DepthL12 {
+  uint32 value = 1;
+  DepthL13 next = 2;
+}
+
+message DepthL11 {
+  uint32 value = 1;
+  DepthL12 next = 2;
+}
+
+message DepthL10 {
+  uint32 value = 1;
+  DepthL11 next = 2;
+}
+
+message DepthL9 {
+  uint32 value = 1;
+  DepthL10 next = 2;
+}
+
+message DepthL8 {
+  uint32 value = 1;
+  DepthL9 next = 2;
+}
+
+message DepthL7 {
+  uint32 value = 1;
+  DepthL8 next = 2;
+}
+
+message DepthL6 {
+  uint32 value = 1;
+  DepthL7 next = 2;
+}
+
+message DepthL5 {
+  uint32 value = 1;
+  DepthL6 next = 2;
+}
+
+message DepthL4 {
+  uint32 value = 1;
+  DepthL5 next = 2;
+}
+
+message DepthL3 {
+  uint32 value = 1;
+  DepthL4 next = 2;
+}
+
+message DepthL2 {
+  uint32 value = 1;
+  DepthL3 next = 2;
+}
+
+message DepthL1 {
+  uint32 value = 1;
+  DepthL2 next = 2;
+}
+
+message DepthL0 {
+  uint32 value = 1;
+  DepthL1 next = 2;
+}

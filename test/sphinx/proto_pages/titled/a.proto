@@ -1,0 +1,11 @@
+/*
+ * @page alpha Alpha
+ * The first titled file of a directory.
+ */
+
+syntax = "proto3";
+package pages.titled;
+
+message A {
+   uint32 id = 1;
+}

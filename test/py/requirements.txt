@@ -1,0 +1,4 @@
+protobuf>=4.25
+# optional: with these two the generated codec is compiled and the tests run against it as well
+cython>=0.29.37
+setuptools

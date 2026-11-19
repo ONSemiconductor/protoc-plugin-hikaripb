@@ -1,0 +1,22 @@
+{% if label %}
+({{ label }})=
+
+{% endif %}
+# {{ title }}
+
+{% if description %}
+{{ description }}
+
+{% endif %}
+{% if listing %}
+{{ listing }}
+
+{% endif %}
+```{toctree}
+:hidden:
+:titlesonly:
+
+{% for entry in entries %}
+{{ entry }}
+{% endfor %}
+```

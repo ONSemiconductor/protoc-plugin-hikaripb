@@ -1,0 +1,701 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_decode.c
+ * @brief   implementation of the protobuf decoder.
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Decoder Decoder
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Decoder implementation generated from protobuf definitions.
+ * @{
+ */
+
+#include "{{ p }}_decode.h"
+
+#if !{{ P }}_ENABLE_MULTI_DEC
+static struct {{ p }}_DecodeContext g_decode_context;
+#endif
+
+#if {{ P }}_ENABLE_MULTI_DEC
+#define {{ P }}_DEC_STATE(decoder_ctx) (decoder_ctx)
+#else
+#define {{ P }}_DEC_STATE(decoder_ctx) (&g_decode_context)
+#endif
+
+#if (!{{ P }}_ERROR_ON_UNKNOWN_TAG) || {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR || {{ P }}_CONTINUE_ON_ONEOF_ERROR || {{ P }}_CONTINUE_ON_CALLBACK_ERROR || {{ P }}_CONTINUE_ON_OVERFLOW
+#define {{ P }}_DEC_NEEDS_SKIP_TYPE 1
+#else
+#define {{ P }}_DEC_NEEDS_SKIP_TYPE 0
+#endif
+
+#if {{ P }}_DEC_NEEDS_SKIP_TYPE || {{ P }}_CONTINUE_ON_OVERFLOW
+#define {{ P }}_DEC_NEEDS_SKIP_BYTES 1
+#else
+#define {{ P }}_DEC_NEEDS_SKIP_BYTES 0
+#endif
+
+static inline {{ P }}_INLINE_ATTR void decode_item_inner({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                         pb_u8* item_data,
+                                                         const struct {{ p }}_ItemDescriptor* desc,
+                                                         pb_u32 len);
+
+#if {{ P }}_DEC_NEEDS_SKIP_TYPE
+static {{ P }}_OPTIMIZE_ATTR void skip_type({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8 wireType, pb_u16 len);
+#endif
+
+{# the bytes of a varint after those that decode_uint32() reads: few varints have them, so one function reads them instead of
+   code at every place where a varint is decoded #}
+static {{ P }}_OPTIMIZE_ATTR pb_u32 decode_uint32_rest({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u32 value) {
+    pb_u8 byte = 0U;
+    pb_u32 result = value;
+{%- for k in range(2, 4) %}
+
+#if {{ P }}_DEC_VARINT_UNROLL > {{ k }}
+    if ({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE) {
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+        return 0U;
+    }
+    result |= ((pb_u32)byte & 0x7FU) << {{ 7 * k }}U;
+    if (((pb_u32)byte & 0x80U) == 0U) {
+        return result;
+    }
+#endif
+{%- endfor %}
+
+#if {{ P }}_DEC_VARINT_UNROLL > 4
+    if ({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE) {
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+        return 0U;
+    }
+    // the fifth byte holds the highest 4 bits of a 32-bit value
+    result |= ((pb_u32)byte & 0x0FU) << 28U;
+#else
+    {
+        pb_u32 index = (pb_u32){{ P }}_DEC_VARINT_UNROLL;
+
+        while (index < 5U) {
+            if ({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE) {
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+                if (index > 0U) {
+                    {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+                }
+                return 0U;
+            }
+            // the fifth byte holds the highest 4 bits of a 32-bit value
+            result |= ((pb_u32)byte & ((index < 4U) ? 0x7FU : 0x0FU)) << (7U * index);
+            if ((((pb_u32)byte & 0x80U) == 0U) && (index < 4U)) {
+                return result;
+            }
+            index++;
+        }
+    }
+#endif
+
+    {# the fifth byte has room for 7 bits, a 32-bit value uses 4 of them: a value wider than 32 bits is an error, its upper
+       bits are not dropped; the rest of a longer varint is consumed #}
+    if (((pb_u32)byte & 0xF0U) != 0U) {
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_VARINT_OVERFLOW;
+        while (((pb_u32)byte & 0x80U) != 0U) {
+            if ({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE) {
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+                byte = 0U;
+            }
+        }
+    }
+
+    return result;
+}
+
+
+{# varint decode primitive; every other decode_* function reads through this. The first {{ P }}_DEC_VARINT_UNROLL bytes are read
+   by straight-line code, the others by a loop; a varint has 5 bytes at most. The first two of them, which hold every key and
+   every value below 16384, are read here, at every place where a varint is decoded; decode_uint32_rest() reads the others #}
+static inline {{ P }}_INLINE_ATTR pb_u32 decode_uint32({{ P }}_DEC_CTX_ONLY(struct {{ p }}_DecodeContext* decoder_ctx)) {
+#if {{ P }}_DEC_VARINT_UNROLL > 0
+    pb_u8 byte = 0U;
+    pb_u32 result = 0U;
+
+    if ({{ P }}_UNLIKELY({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE)) {
+        // no error here, probably the end of the input
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        return 0U;
+    }
+    result = (pb_u32)byte & 0x7FU;
+    if ({{ P }}_LIKELY(((pb_u32)byte & 0x80U) == 0U)) {
+        return result;
+    }
+#if {{ P }}_DEC_VARINT_UNROLL > 1
+    if ({{ p }}_pop({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) &byte) == PB_FALSE) {
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+        return 0U;
+    }
+    result |= ((pb_u32)byte & 0x7FU) << 7U;
+    if (((pb_u32)byte & 0x80U) == 0U) {
+        return result;
+    }
+#endif
+    return decode_uint32_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) result);
+#else
+    return decode_uint32_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) 0U);
+#endif
+}
+
+static inline {{ P }}_INLINE_ATTR pb_s32 decode_int32({{ P }}_DEC_CTX_ONLY(struct {{ p }}_DecodeContext* decoder_ctx)) {
+    const pb_u32 val = decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+    const pb_u32 magnitude = val >> 1U;
+    // zigzag: the lowest bit is the sign
+    const pb_u32 bits = ((val & 1U) != 0U) ? ~magnitude : magnitude;
+
+    return (pb_s32)bits;
+}
+
+#if {{ P }}_DEC_NEEDS_SKIP_BYTES
+static {{ P }}_OPTIMIZE_ATTR void skip_bytes({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u16 len) {
+    if ({{ p }}_skip({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) len) == PB_FALSE) {
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        // the input ends within a field
+        if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+        }
+    }
+}
+#endif
+
+#if {{ P }}_DEC_NEEDS_SKIP_TYPE
+static {{ P }}_OPTIMIZE_ATTR void skip_type({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8 wireType, pb_u16 len) {
+    if (wireType == (pb_u8){{ P }}_WIRE_VARINT) {
+        (void)decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+    } else if (wireType == (pb_u8){{ P }}_WIRE_FIXED32) {
+        skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) (pb_u16)sizeof(pb_u32));
+    } else if (wireType == (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) {
+        skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) len);
+    } else if (wireType == (pb_u8){{ P }}_WIRE_FIXED64) {
+        skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) (pb_u16)sizeof(pb_u64));
+    } else {
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNKNOWN_WIRETYPE;
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+    }
+}
+#endif
+
+static {{ P }}_OPTIMIZE_ATTR void decode_bytes({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* data, pb_u16 max_len) {
+    if ({{ p }}_read({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx,) data, max_len) == PB_FALSE) {
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        // the input ends within a field
+        if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+        }
+    }
+}
+
+{# the elements of a repeated field follow its header, size bytes each #}
+static pb_u8* array_element(struct {{ p }}_ArrayWrapper* arr, pb_u32 index, pb_u32 size) {
+    return &{{ p }}_ArrayWrapper_data(arr)[(pb_size)index * (pb_size)size];
+}
+
+{# the length of a field is a varint of up to 32 bits, but the reader functions and the descriptors count in 16 bits #}
+static inline {{ P }}_INLINE_ATTR pb_u16 decode_length({{ P }}_DEC_CTX_ONLY(struct {{ p }}_DecodeContext* decoder_ctx)) {
+    const pb_u32 length = decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+    pb_u16 result = 0U;
+
+    if (length > 0xFFFFU) {
+        // a longer field fits no storage, and truncating its length would make the decoder lose the field boundaries
+        if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
+        }
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+    } else {
+        result = (pb_u16)length;
+    }
+    return result;
+}
+
+{# a field whose wire type is not the one of its type in the descriptor is not a field of the message: it is skipped or an error #}
+static inline {{ P }}_INLINE_ATTR pb_bool wire_type_matches(const struct {{ p }}_ItemDescriptor* desc, pb_u8 wireType) {
+    pb_u8 expected = (pb_u8){{ P }}_WIRE_VARINT;
+    pb_bool matches = PB_FALSE;
+
+    if ((desc->type == (pb_u8){{ P }}_ITEM_MESSAGE) || (desc->type == (pb_u8){{ P }}_ITEM_BYTES)) {
+        expected = (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED;
+    } else if (desc->type == (pb_u8){{ P }}_ITEM_FIXED_32) {
+        expected = (pb_u8){{ P }}_WIRE_FIXED32;
+    } else {
+        expected = (pb_u8){{ P }}_WIRE_VARINT;
+    }
+
+    // a repeated scalar is also valid packed: all its elements in one length-delimited field
+    if ((wireType == expected) ||
+        ((desc->isRepeated != PB_FALSE) && (wireType == (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) &&
+         (desc->type < (pb_u8){{ P }}_ITEM_MESSAGE))) {
+        matches = PB_TRUE;
+    }
+    return matches;
+}
+
+#if {{ P }}_ENABLE_REPEATED_BYTES
+{# repeated string/bytes element; the field is {count, item[cnt]} with item = {pb_u32 length; pb_u8 data[size]} (message_item.j2) #}
+static void decode_repeated_bytes({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                  pb_u8* item_data,
+                                  const struct {{ p }}_ItemDescriptor* desc,
+                                  pb_u16 len) {
+    struct {{ p }}_ArrayWrapper* arr = (struct {{ p }}_ArrayWrapper*)(item_data);
+    pb_bool overflow = PB_TRUE;
+
+    if (arr->len >= desc->which.fixed.cnt) {
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+    } else if (len > desc->which.fixed.size) {
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
+    } else {
+        // the struct is padded to the alignment of its pb_u32 member
+        const pb_u32 mask = (pb_u32)sizeof(pb_u32) - 1U;
+        const pb_u32 stride = ((pb_u32)sizeof(pb_u32) + (pb_u32)desc->which.fixed.size + mask) & ~mask;
+        pb_u8* elem_data = array_element(arr, arr->len, stride);
+        struct {{ p }}_ArrayWrapper* elem = (struct {{ p }}_ArrayWrapper*)(elem_data);
+        decode_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) {{ p }}_ArrayWrapper_data(elem), len);
+        elem->len = (pb_u32)len;
+        arr->len++;
+        overflow = PB_FALSE;
+    }
+
+    if (overflow != PB_FALSE) {
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+        skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) len);
+#else
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+    }
+}
+#endif
+
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR || {{ P }}_CONTINUE_ON_OVERFLOW
+{# the rest of a packed field: a part of it has been read already, skipping its whole length would lose the next field #}
+static void skip_packed_rest({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u32 end_offset) {
+    const pb_u32 offset = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx));
+
+    if (offset < end_offset) {
+        skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) (pb_u16)(end_offset - offset));
+    }
+}
+#endif
+
+{# true when the callback of a field decodes it; never when the callbacks are disabled #}
+static inline pb_bool has_callback(const struct {{ p }}_ItemDescriptor* desc) {
+#if {{ P }}_CALLBACK
+    return desc->hasCallback;
+#else
+    (void)desc;
+    return PB_FALSE;
+#endif
+}
+
+{# a field that is not repeated: a callback, a bytes or string, a message or a scalar #}
+static inline {{ P }}_INLINE_ATTR void decode_single_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                           const struct {{ p }}_ItemDescriptor* desc,
+                                                           pb_u8* item_data,
+                                                           pb_u8 wireType,
+                                                           pb_u16 len) {
+#if !{{ P }}_CONTINUE_ON_CALLBACK_ERROR
+    (void)wireType;
+#endif
+    if (has_callback(desc) != PB_FALSE) {
+        if ({{ P }}_UNLIKELY(desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data)) == PB_FALSE)) {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+            skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#else
+            {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+        }
+    } else if (desc->type == (pb_u8){{ P }}_ITEM_BYTES) {
+        if ({{ P }}_LIKELY(len <= desc->which.fixed.size)) {
+            struct {{ p }}_ArrayWrapper* arr = (struct {{ p }}_ArrayWrapper*)(item_data);
+            decode_item_inner({{ P }}_DEC_CTX_DEF(decoder_ctx,) {{ p }}_ArrayWrapper_data(arr), desc, (pb_u32)len);
+            arr->len = (pb_u32)len;
+        } else {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+            skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) len);
+#else
+            {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+        }
+    } else {
+        decode_item_inner({{ P }}_DEC_CTX_DEF(decoder_ctx,) item_data, desc, (pb_u32)len);
+    }
+}
+
+{# the elements of a packed repeated scalar field: all of them in one length-delimited field #}
+static void decode_packed_elements({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                   const struct {{ p }}_ItemDescriptor* desc,
+                                   pb_u8* item_data,
+                                   pb_u16 len) {
+    const pb_u32 end_offset = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) + (pb_u32)len;
+    pb_bool stop = PB_FALSE;
+
+    while ((stop == PB_FALSE) && ({{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) < end_offset) &&
+           ({{ P }}_DEC_STATE(decoder_ctx)->eof == PB_FALSE)) {
+        if (has_callback(desc) != PB_FALSE) {
+            const pb_u32 offset_before = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx));
+            const pb_bool done = desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, 0U, (void**)(item_data));
+
+            // a callback that does not read its element would be called again for ever
+            if ((done == PB_FALSE) || ({{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) == offset_before)) {
+                {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+                stop = PB_TRUE;
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+                skip_packed_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) end_offset);
+#else
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+            }
+        } else {
+            struct {{ p }}_ArrayWrapper* arr = (struct {{ p }}_ArrayWrapper*)(item_data);
+            if (arr->len < (pb_u32)desc->which.fixed.cnt) {
+                decode_item_inner({{ P }}_DEC_CTX_DEF(decoder_ctx,) array_element(arr, arr->len, (pb_u32)desc->which.fixed.size), desc, 0U);
+                arr->len++;
+            } else {
+                {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+                stop = PB_TRUE;
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+                skip_packed_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) end_offset);
+#else
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+            }
+        }
+    }
+}
+
+{# a repeated field: the elements of a packed scalar field, else one element per field (message, string, bytes, unpacked scalar) #}
+static void decode_repeated_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                  const struct {{ p }}_ItemDescriptor* desc,
+                                  pb_u8* item_data,
+                                  pb_u8 wireType,
+                                  pb_u16 len) {
+    if ((wireType != (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) || (desc->type >= (pb_u8){{ P }}_ITEM_MESSAGE)) {
+        if (has_callback(desc) != PB_FALSE) {
+            if (desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data)) == PB_FALSE) {
+                {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+                skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#else
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+            }
+        }
+#if {{ P }}_ENABLE_REPEATED_BYTES
+        else if (desc->type == (pb_u8){{ P }}_ITEM_BYTES) {
+            decode_repeated_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) item_data, desc, len);
+        }
+#endif
+        else {
+            struct {{ p }}_ArrayWrapper* arr = (struct {{ p }}_ArrayWrapper*)(item_data);
+            if (arr->len < (pb_u32)desc->which.fixed.cnt) {
+                decode_item_inner({{ P }}_DEC_CTX_DEF(decoder_ctx,) array_element(arr, arr->len, (pb_u32)desc->which.fixed.size), desc, (pb_u32)len);
+                arr->len++;
+            } else {
+                {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+                skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#else
+                {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+            }
+        }
+    } else {
+        decode_packed_elements({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, item_data, len);
+    }
+}
+
+{# a field of the message: the oneof it is a member of, its presence bit, then the storage of its shape #}
+static inline {{ P }}_INLINE_ATTR void decode_known_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                          const struct {{ p }}_decodeFrame* f,
+                                                          const struct {{ p }}_ItemDescriptor* desc,
+                                                          pb_u32 tag,
+                                                          pb_u8 wireType,
+                                                          pb_u16 len) {
+    pb_u8* item_data = &f->msg[desc->offset];
+    pb_bool store = PB_TRUE;
+
+    if ({{ P }}_UNLIKELY(desc->isOneof != PB_FALSE)) {
+        struct {{ p }}_UnionWrapper* oneof_wrapper = (struct {{ p }}_UnionWrapper*)(item_data);
+        if ({{ P }}_LIKELY(oneof_wrapper->tag == 0U)) {
+            oneof_wrapper->tag = tag;
+            item_data = {{ p }}_UnionWrapper_data(oneof_wrapper);
+        } else {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_ONEOF_ERROR;
+#if {{ P }}_CONTINUE_ON_ONEOF_ERROR
+            skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#else
+            {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+            store = PB_FALSE;
+        }
+    }
+
+    if (store != PB_FALSE) {
+        // Mark the field as used in the presence bitmap. The descriptor exists, so the tag is a field number of the
+        // schema and fits pb_tag.
+        {{ p }}_setUsed(f->msg, (pb_tag)tag);
+
+        if ({{ P }}_UNLIKELY(desc->isRepeated != PB_FALSE)) {
+            decode_repeated_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, item_data, wireType, len);
+        } else {
+            decode_single_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, item_data, wireType, len);
+        }
+    }
+}
+
+static inline {{ P }}_INLINE_ATTR void decode_msg_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                       const struct {{ p }}_decodeFrame* f,
+                                                       pb_u32 tag,
+                                                       pb_u8 wireType,
+                                                       pb_u16 len) {
+{# looks up the field's descriptor by tag, then routes to decode_item_inner - handles unknown tags, oneofs and repeated/scalar storage #}
+    const struct {{ p }}_ItemDescriptor* desc = f->msg_desc->getItemDescriptor(tag);
+
+    // a field that has another wire type than its descriptor has is not a field of the message: unknown
+    if ({{ P }}_UNLIKELY((desc == PB_NULL) || (wire_type_matches(desc, wireType) == PB_FALSE))) {
+#if {{ P }}_ERROR_ON_UNKNOWN_TAG
+        if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
+            {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNKNOWN_TAG;
+        }
+#if {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR
+        skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#else
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+#endif
+#else
+        skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
+#endif
+    } else {
+        decode_known_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) f, desc, tag, wireType, len);
+    }
+}
+
+static {{ P }}_OPTIMIZE_ATTR void decode_msg({{ P }}_DEC_CTX_ONLY(struct {{ p }}_DecodeContext* decoder_ctx)) {
+    {# main tag/wiretype read loop; walks decode_stack instead of recursing into nested messages #}
+    const pb_u8 entry_depth = {{ P }}_DEC_STATE(decoder_ctx)->decode_depth;
+    // the frame of the current depth, taken again only when the depth changes: the index costs a multiplication by the
+    // size of a frame for every field
+    pb_u8 depth = entry_depth;
+    const struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[entry_depth];
+    pb_bool running = PB_TRUE;
+
+    while ({{ P }}_LIKELY(running != PB_FALSE)) {
+        if ({{ P }}_DEC_STATE(decoder_ctx)->decode_depth != depth) {
+            depth = {{ P }}_DEC_STATE(decoder_ctx)->decode_depth;
+            f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[depth];
+        }
+
+        if ({{ P }}_DEC_STATE(decoder_ctx)->eof != PB_FALSE) {
+            running = PB_FALSE;
+        } else if ({{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) >= f->max_offset) {
+            // Finished this nesting level — pop or exit.
+            if ({{ P }}_DEC_STATE(decoder_ctx)->decode_depth == entry_depth) {
+                running = PB_FALSE;
+            } else {
+                {{ P }}_DEC_STATE(decoder_ctx)->decode_depth--;
+            }
+        } else {
+            const pb_u32 val = decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+
+            if ({{ P }}_DEC_STATE(decoder_ctx)->eof != PB_FALSE) {
+                if ((f->max_offset != (pb_u32)0xFFFFFFFFUL) && ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK)) {
+                    {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+                }
+                running = PB_FALSE;
+            } else {
+                // the whole field number: one that is not a field of the schema must not wrap around to one that is
+                const pb_u32 tag = val >> 3U;
+                const pb_u8 wireType = (pb_u8)(val & 0x07U);
+                pb_u16 len = 0U;
+
+                if (wireType == (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) {
+                    len = decode_length({{ P }}_DEC_CTX_DEF(decoder_ctx));
+                }
+
+                // a length that does not fit ends the decoding: the boundaries of the field are lost
+                if ({{ P }}_DEC_STATE(decoder_ctx)->eof == PB_FALSE) {
+                    decode_msg_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) f, tag, wireType, len);
+                }
+            }
+        }
+    }
+}
+
+static void tb_msg({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    {# tb_* = "type-based" decoders, one per {{ p }}_ItemType, indexed by decode_table below #}
+    /* Push the submessage onto the context's decode stack so the running
+     * decode_msg loop processes it on the next iteration — without allocating
+     * a new stack frame.  This means callbacks that call decode_item for a
+     * MESSAGE field work correctly and at constant stack cost. */
+    const pb_u8 new_depth = (pb_u8)({{ P }}_DEC_STATE(decoder_ctx)->decode_depth + 1U);
+
+    if (new_depth >= (pb_u8){{ P }}_DEC_MAX_DEPTH) {
+        {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_DEPTH_EXCEEDED;
+        {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+    } else {
+        struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[new_depth];
+
+        f->msg = item_data;
+        f->max_offset = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) + len;
+        f->msg_desc = {{ p }}_getMessageDescriptor(id);
+        f->msg_desc->clear(item_data);
+        {{ P }}_DEC_STATE(decoder_ctx)->decode_depth = new_depth;
+    }
+}
+
+static void tb_uint32({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    (void)len;
+    *((pb_u32*)item_data) = decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+}
+
+static void tb_uint16({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    (void)len;
+    *((pb_u16*)item_data) = (pb_u16)decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+}
+
+static void tb_uint8({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    (void)len;
+    *item_data = (pb_u8)decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+}
+
+static void tb_int32({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    (void)len;
+    *((pb_s32*)item_data) = decode_int32({{ P }}_DEC_CTX_DEF(decoder_ctx));
+}
+
+static void tb_bool({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    (void)len;
+    {# the whole value counts: 0x100 or 0xFF000000 are true as well, a cast to 8 bits would make them false #}
+    *((pb_bool*)item_data) = (decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx)) != 0U) ? PB_TRUE : PB_FALSE;
+}
+
+static void tb_bytes({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    (void)id;
+    decode_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) item_data, (pb_u16)len);
+}
+
+static void tb_fixed32({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) pb_u8* item_data, pb_msgid id, pb_u32 len) {
+    pb_u8 buf[4] = {0U, 0U, 0U, 0U};
+    (void)id;
+    (void)len;
+    decode_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) buf, 4U);
+    {# the wire format is little-endian; assembling the value from bytes works on any host byte order #}
+    *((pb_u32*)item_data) = (pb_u32)buf[0] |
+                            ((pb_u32)buf[1] << 8U) |
+                            ((pb_u32)buf[2] << 16U) |
+                            ((pb_u32)buf[3] << 24U);
+}
+
+static inline {{ P }}_INLINE_ATTR void decode_item_inner({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                         pb_u8* item_data,
+                                                         const struct {{ p }}_ItemDescriptor* desc,
+                                                         pb_u32 len) {
+    {# order must match enum {{ p }}_ItemType in defines.h.j2 #}
+    static void (*const decode_table[{{ P }}_ITEM_MAX_TYPE])({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                             pb_u8* item_data,
+                                                             pb_msgid id,
+                                                             pb_u32 len) = {
+        &tb_uint32,   // VARINT_32
+        &tb_uint16,   // VARINT_16
+        &tb_uint8,    // VARINT_8
+        &tb_int32,    // VARINT_S32
+        &tb_bool,     // BOOL
+        &tb_fixed32,  // FIXED_32
+        &tb_msg,      // MESSAGE
+        &tb_bytes,    // BYTES
+    };
+
+    {{ P }}_ASSERT(desc->type < (pb_u8){{ P }}_ITEM_MAX_TYPE);
+    if (desc->type < (pb_u8){{ P }}_ITEM_MAX_TYPE) {
+        decode_table[desc->type]({{ P }}_DEC_CTX_DEF(decoder_ctx,) item_data, desc->id, len);
+    }
+}
+
+void {{ p }}_decode_item({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                         pb_u8* item_data,
+                         const struct {{ p }}_ItemDescriptor* desc,
+                         pb_u32 len) {
+    decode_item_inner({{ P }}_DEC_CTX_DEF(decoder_ctx,) item_data, desc, len);
+    if (desc->type == (pb_u8){{ P }}_ITEM_MESSAGE) {
+        // For MESSAGE fields, the decode_item_inner function will have pushed
+        // the submessage onto the decode stack. Since the callback should decode the submessage,
+        // we need to start decoding the submessage here.
+        decode_msg({{ P }}_DEC_CTX_DEF(decoder_ctx));
+    }
+}
+
+void {{ p }}_decode({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) void* msg, pb_msgid msgID) {
+    struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[0U];
+
+    {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_FALSE;
+    {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_OK;
+    {{ P }}_DEC_STATE(decoder_ctx)->decode_depth = 0U;
+    f->msg = (pb_u8*)msg;
+    f->msg_desc = {{ p }}_getMessageDescriptor(msgID);
+    f->max_offset = (pb_u32)0xFFFFFFFFUL;
+    f->msg_desc->clear(f->msg);
+
+    decode_msg({{ P }}_DEC_CTX_DEF(decoder_ctx));
+}
+
+pb_bool {{ p }}_hasError({{ P }}_DEC_CTX_ONLY(const struct {{ p }}_DecodeContext* decoder_ctx)) {
+#if {{ P }}_ENABLE_MULTI_DEC
+    {{ P }}_ASSERT(decoder_ctx != PB_NULL);
+    return (decoder_ctx->error != {{ P }}_DECODER_OK) ? PB_TRUE : PB_FALSE;
+#else
+    return (g_decode_context.error != {{ P }}_DECODER_OK) ? PB_TRUE : PB_FALSE;
+#endif
+}
+
+enum {{ p }}_DecodeError {{ p }}_getError({{ P }}_DEC_CTX_ONLY(const struct {{ p }}_DecodeContext* decoder_ctx)) {
+#if {{ P }}_ENABLE_MULTI_DEC
+    {{ P }}_ASSERT(decoder_ctx != PB_NULL);
+    return decoder_ctx->error;
+#else
+    return g_decode_context.error;
+#endif
+}

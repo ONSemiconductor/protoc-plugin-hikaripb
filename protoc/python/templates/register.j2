@@ -1,0 +1,5 @@
+_codec.register({{ name }}, [
+{% for f in fields %}
+    _codec.Field({{ f.number }}, "{{ f.name }}", "{{ f.attr }}", "{{ f.kind }}", "{{ f.label }}"{% if f.bit >= 0 %}, bit={{ f.bit }}{% endif %}{% if f.group %}, oneof="{{ f.group }}"{% endif %}{% if f.ref %}, sub={{ f.ref }}{% endif %}),
+{% endfor %}
+])

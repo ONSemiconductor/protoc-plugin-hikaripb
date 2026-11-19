@@ -1,0 +1,219 @@
+{# _clear/_getItemDescriptor/_getTagName/_print are only needed for messages that can be received #}
+#if !{{fullname}}_writeonly
+
+void {{fullname}}_clear (void* data) {
+   struct {{fullname}}* msg = (struct {{fullname}}*) data;
+{# zero the presence bitmap: byte-by-byte when it is short, in a loop when a large field number makes it long #}
+{% if presence_size > 8 %}
+    for (pb_u32 i = 0U; i < {{presence_size}}U; i++) {
+        msg->presence[i] = 0U;
+    }
+{% else %}
+{% for i in range(presence_size) %}
+    msg->presence[{{i}}] = 0U;
+{% endfor %}
+{% endif %}
+
+{# reset every field to its zero value, grouped the same way as the struct itself #}
+{% for k,v in members.items() %}
+{% if k != "" %}
+    msg->{{k}}_tag = 0U;
+{% endif %}
+{% for item in v %}
+{% if item.rpt%}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = PB_NULL;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}}.count = 0U;
+#endif
+{% else %}
+{% if item.c_type == "pb_u8*"%}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = PB_NULL;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}}.length = 0U;
+#endif
+{% elif item.name not in optionals | map(attribute='name') and item.type != P ~ "_ITEM_MESSAGE"%}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+msg->{{ k + "." if k else "" }}{{item.name}} = PB_NULL;
+#else
+msg->{{ k + "." if k else "" }}{{item.name}} = ({{fullname}}_{{item.name}}_ctype)0;
+#endif
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endfor %} 
+} 
+
+{# the user-supplied callbacks are declared in the header, see message.j2 #}
+const struct {{ p }}_ItemDescriptor* {{fullname}}_getItemDescriptor(pb_u32 tag){
+{% if not descriptors %}
+    {# no field: no descriptor table, as a zero-length array is not valid C #}
+    (void)tag;
+    return PB_NULL;
+}
+{% else %}
+    {# one static descriptor entry per field, in field number order: the consecutive-tag groups below index it #}
+    static const struct {{ p }}_ItemDescriptor {{fullname}}_desc[{{descriptors|length}}] = {
+    {% for item in descriptors | sort(attribute='tag') %}
+    { 
+        .offset=(pb_u16)PB_OFFSETOF({{fullname}}, {{item.name if item.group == "" else item.group + "_tag"}}),
+        .id=(pb_msgid){{item.c_type + '_ID' if item.type == P ~ '_ITEM_MESSAGE' else 0}},
+        .type=(pb_u8){{fullname}}_{{item.name}}_{{ p }}type, 
+        .isRepeated={{'PB_TRUE' if item.rpt else 'PB_FALSE'}},
+        .isOneof={{'PB_TRUE' if item.group != "" else 'PB_FALSE'}},
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK 
+        .hasCallback=PB_TRUE,
+        .which = { .callback={{fullname}}_{{item.name}}_callback }
+#else
+        .hasCallback=PB_FALSE,
+        .which = { .fixed = {
+{% if item.c_type == "pb_u8*"%}    
+#ifdef {{fullname}}_{{item.name}}_size
+        .size={{fullname}}_{{item.name}}_size,
+#else
+{%endif%}
+        .size = (pb_u16)sizeof({{fullname}}_{{item.name}}_ctype),
+{% if item.c_type == "pb_u8*"%}    
+#endif
+{%endif%}
+#ifdef {{fullname}}_{{item.name}}_count
+        .cnt = {{fullname}}_{{item.name}}_count,
+#else
+        .cnt = 0U,
+#endif
+        } }
+#endif
+    },
+    {% endfor %} 
+
+    };
+    {# tags are 1-based and mostly consecutive; tag_groups (built in c/parser.py)
+       maps each run of consecutive tags to one bounds check instead of a
+       per-tag switch/lookup table #}
+    pb_u32 idx = tag - 1U;
+    const struct {{ p }}_ItemDescriptor* desc = PB_NULL;
+    {% for offset, group in tag_groups.items() %}
+    {% if group|length == 1 %}
+    if(idx == {{group[0]}}U) {
+        desc = &{{fullname}}_desc[idx{{' - ' + ((group[0] - offset)|string + 'U') if group[0] else ''}}];
+    }
+    {% else %}
+    if({{'(idx >= ' + group[0]|string +  'U) && ' if group[0] else ''}}(idx <= {{group[-1]}}U)) {
+        desc = &{{fullname}}_desc[idx{{' - ' + ((group[0] - offset)|string + 'U') if group[0] else ''}}];
+    }
+    {% endif %}
+    {% endfor %}
+
+    return desc;
+}
+{% endif %}
+
+const char* {{fullname}}_getTagName (pb_u32 tag){
+    {# debug/print-only: map each tag back to its field name #}
+{% if not descriptors %}
+    (void)tag;
+    return "unknown tag";
+}
+{% else %}
+    const char* name;
+
+    switch(tag) {
+        {% for item in descriptors %}
+        case {{item.tag}}U: name = "{{item.name}}"; break;
+        {% endfor %}
+        default: name = "unknown tag"; break;
+    }
+    return name;
+}
+{% endif %}
+
+
+{%set item_map = {"pb_u32": P ~ "_U32_F", "pb_u16": P ~ "_U16_F", "pb_u8": P ~ "_U8_F", "pb_bool": P ~ "_U8_F", "pb_s32": P ~ "_S32_F"}%}    
+void {{fullname}}_print(const {{fullname}}* msg){
+#if {{ P }}_PRINT_ENABLE
+
+    {# Print message name only for top level messages #}
+    {{ P }}_PRINTLN("{{msgname}}:");
+    {{fullname}}_print_int(msg, (pb_u32){{ P }}_INDENT_SIZE);
+
+#else
+
+    (void)msg;
+
+#endif
+}
+
+void {{fullname}}_print_int(const {{fullname}}* msg, pb_u32 indent){
+#if {{ P }}_PRINT_ENABLE
+    (void)msg;
+{% if not descriptors %}
+    (void)indent;
+{% endif %}
+    {# Iterate over all items #}
+    {% for item in descriptors %}
+    {# Check if the item is optional #}
+    {%if item.tag in optionals|map(attribute='tag')%}
+    if({{fullname}}_has_{{item.name}}(msg) != PB_FALSE){
+    {%endif%}
+
+    {# Check if callback is enabled for the item #}
+#if !({{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK)
+    {
+    {# Print the item name if it's not a byte array or a nested message #}
+    {% if item.c_type != "pb_u8*" and item.type != P ~ "_ITEM_MESSAGE"%}
+    for(pb_u32 space = 0U; space < indent; space++){ {{ P }}_PRINT(" "); }
+    {{(P ~ "_PRINTLN") if item.rpt else (P ~ "_PRINT")}}("{{item.name}}: ");
+    {% endif %}
+    {# Determine the indentation for nested items #}
+    {% if item.rpt or item.c_type == "pb_u8*" or item.type == P ~ "_ITEM_MESSAGE"%}
+    pb_u32 indent_int = indent + (pb_u32){{ P }}_INDENT_SIZE;
+    {% endif%}    
+    {# Handle repeated items #}
+    {% if item.rpt %} 
+    for(pb_u32 i = 0U; i < msg->{{item.name}}.count; i++) { 
+    {% endif %}
+    {# Print based on the item type #}
+    {% if item.c_type == "pb_u8*"%}
+    for(pb_u32 space = 0U; space < indent; space++) { {{ P }}_PRINT(" "); } {{ P }}_PRINTLN("{{item.name}}: "); 
+    {{ p }}_print_{{item.array_type}}(msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt}}.data, (pb_u16)msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt}}.length, indent_int);
+    {%elif item.type == P ~ '_ITEM_MESSAGE'%}
+    for(pb_u32 space = 0U; space < indent; space++) { {{ P }}_PRINT(" "); } {{ P }}_PRINTLN("{{item.name}}: "); 
+    {{item.c_type}}_print_int(&msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}}, indent_int);
+    {%elif item.c_type in item_map.keys()%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%" {{item_map[item.c_type]}}, msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}});
+    {%elif item.c_type == "float"%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%" {{ P }}_FLOAT_F, (double)msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}});
+    {%else%}
+    {% if item.rpt %}
+    for(pb_u32 space = 0U; space < indent_int; space++) { {{ P }}_PRINT(" "); }
+    {% endif %}
+    {{ P }}_PRINTLN("%s", {{item.enum_type}}_to_string(({{item.enum_type}}) msg->{{item.group + "." if item.group != "" }}{{item.name}}{{".item[i]" if item.rpt else ""}}));
+    {%endif%}
+
+    {% if item.rpt%} } {% endif%}
+    }
+#else
+    {# If callback is enabled, just indicate that in the printout #}
+    for(pb_u32 space = 0U; space < indent; space++){ {{ P }}_PRINT(" "); }
+    {{ P }}_PRINTLN("{{item.name}}: callback");
+#endif // {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+
+    {% if item.tag in optionals|map(attribute='tag') %}  } {% endif %}
+    {% endfor %}
+
+#else
+
+    (void)msg;
+    (void)indent;
+
+#endif // {{ P }}_PRINT_ENABLE
+}
+
+#endif // {{fullname}}_writeonly

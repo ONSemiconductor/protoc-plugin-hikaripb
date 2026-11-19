@@ -1,0 +1,258 @@
+/*
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/**
+ * @file    {{ p }}_config_default.h
+ * @brief   Default configuration of the protobuf library: every setting.
+ *
+ * {{ p }}_defines.h includes this file behind {{ p }}_config.h. Every item is defined only when {{ p }}_config.h has
+ * not defined it before, so a definition in {{ p }}_config.h always wins. The standard types and features are in
+ * {{ p }}_types.h.
+ */
+
+#ifndef {{ P }}_CONFIG_DEFAULT_H
+#define {{ P }}_CONFIG_DEFAULT_H
+
+{# the standard types and features are in {{ p }}_types.h #}
+/*
+ * Settings.
+ */
+
+/** Hint that a condition is likely. */
+#ifndef {{ P }}_LIKELY
+#define {{ P }}_LIKELY(x) (x)
+#endif
+
+/** Hint that a condition is unlikely. */
+#ifndef {{ P }}_UNLIKELY
+#define {{ P }}_UNLIKELY(x) (x)
+#endif
+
+/** Attribute of the functions that are inlined. */
+#ifndef {{ P }}_INLINE_ATTR
+#define {{ P }}_INLINE_ATTR
+#endif
+
+/** Attribute of the functions that are optimized. */
+#ifndef {{ P }}_OPTIMIZE_ATTR
+#define {{ P }}_OPTIMIZE_ATTR
+#endif
+
+/** Enable generated callback support. */
+#ifndef {{ P }}_CALLBACK
+#define {{ P }}_CALLBACK 0
+#endif
+
+/** Enable debug helpers and assertions. */
+#ifndef {{ P }}_DEBUG
+#define {{ P }}_DEBUG 0
+#endif
+
+/** Support repeated string and bytes fields; a message with one is a compile error when 0. */
+#ifndef {{ P }}_ENABLE_REPEATED_BYTES
+#define {{ P }}_ENABLE_REPEATED_BYTES 0
+#endif
+
+/** Support float fields; a message with one is a compile error when 0. */
+#ifndef {{ P }}_ENABLE_FLOAT
+#define {{ P }}_ENABLE_FLOAT 0
+#endif
+
+/** Store an enum in the smallest type that holds its largest value when 1, in a pb_u32 when 0. */
+#ifndef {{ P }}_COMPRESS_ENUMS
+#define {{ P }}_COMPRESS_ENUMS 1
+#endif
+
+/** Maximum message nesting depth for decoding. */
+#ifndef {{ P }}_DEC_MAX_DEPTH
+#define {{ P }}_DEC_MAX_DEPTH 8U
+#endif
+
+/**
+ * Number of leading bytes of a varint that the decoder reads by straight-line code, 0 to 5; the other bytes are read by a
+ * loop. 0 is the smallest code, 1 unrolls the first byte (the hot path), 5 unrolls all of them (the fastest, the largest).
+ */
+#ifndef {{ P }}_DEC_VARINT_UNROLL
+#define {{ P }}_DEC_VARINT_UNROLL 5
+#endif
+
+/** Number of bytes reserved for the length of a length-delimited field. */
+#ifndef {{ P }}_ENC_PAD_LENGTH
+#define {{ P }}_ENC_PAD_LENGTH 2U
+#endif
+
+/** Convert unknown tags into decoder errors when 1. */
+#ifndef {{ P }}_ERROR_ON_UNKNOWN_TAG
+#define {{ P }}_ERROR_ON_UNKNOWN_TAG 0
+#endif
+
+/** Continue decoding after an unknown-tag error when 1. */
+#ifndef {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR
+#define {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR 0
+#endif
+
+/** Continue decoding after overflow errors when 1. */
+#ifndef {{ P }}_CONTINUE_ON_OVERFLOW
+#define {{ P }}_CONTINUE_ON_OVERFLOW 0
+#endif
+
+/** Continue decoding after callback errors when 1. */
+#ifndef {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+#define {{ P }}_CONTINUE_ON_CALLBACK_ERROR 0
+#endif
+
+/** Continue decoding after oneof conflicts when 1. */
+#ifndef {{ P }}_CONTINUE_ON_ONEOF_ERROR
+#define {{ P }}_CONTINUE_ON_ONEOF_ERROR 0
+#endif
+
+/** Assertion macro used by generated code. */
+#ifndef {{ P }}_ASSERT
+#define {{ P }}_ASSERT(x)
+#endif
+
+/** Debug print macro used by generated logging helpers. */
+#ifndef {{ P }}_PRINT
+#define {{ P }}_PRINT(fmt, ...)
+#endif
+
+/** Debug print-with-newline macro used by generated logging helpers. */
+#ifndef {{ P }}_PRINTLN
+#define {{ P }}_PRINTLN(fmt, ...)
+#endif
+
+/** Master switch: {{ P }}_PRINT and {{ P }}_PRINTLN only take effect when 1. */
+#ifndef {{ P }}_PRINT_ENABLE
+#define {{ P }}_PRINT_ENABLE 0
+#endif
+
+/** Number of bytes printed per debug output line. */
+#ifndef {{ P }}_CHARS_PER_LINE
+#define {{ P }}_CHARS_PER_LINE 16U
+#endif
+
+/** Number of spaces used for debug indentation. */
+#ifndef {{ P }}_INDENT_SIZE
+#define {{ P }}_INDENT_SIZE 2U
+#endif
+
+/** Unsigned 8-bit printf conversion specifier (no leading '%'). */
+#ifndef {{ P }}_U8_F
+#define {{ P }}_U8_F "u"
+#endif
+
+/** Signed 8-bit printf conversion specifier. */
+#ifndef {{ P }}_S8_F
+#define {{ P }}_S8_F "d"
+#endif
+
+/** Hex 8-bit printf conversion specifier. */
+#ifndef {{ P }}_X8_F
+#define {{ P }}_X8_F "x"
+#endif
+
+/** Unsigned 16-bit printf conversion specifier. */
+#ifndef {{ P }}_U16_F
+#define {{ P }}_U16_F "u"
+#endif
+
+/** Signed 16-bit printf conversion specifier. */
+#ifndef {{ P }}_S16_F
+#define {{ P }}_S16_F "d"
+#endif
+
+/** Hex 16-bit printf conversion specifier. */
+#ifndef {{ P }}_X16_F
+#define {{ P }}_X16_F "x"
+#endif
+
+/** Unsigned 32-bit printf conversion specifier. */
+#ifndef {{ P }}_U32_F
+#define {{ P }}_U32_F "u"
+#endif
+
+/** Signed 32-bit printf conversion specifier. */
+#ifndef {{ P }}_S32_F
+#define {{ P }}_S32_F "d"
+#endif
+
+/** Hex 32-bit printf conversion specifier. */
+#ifndef {{ P }}_X32_F
+#define {{ P }}_X32_F "x"
+#endif
+
+/** Float printf conversion specifier. */
+#ifndef {{ P }}_FLOAT_F
+#define {{ P }}_FLOAT_F "g"
+#endif
+
+/*
+ * Settings of the messages and fields. They have no default: a missing size or count is a compile error. Define the
+ * ones you need in {{ p }}_config.h, with these names.
+ *
+ * Configuration of writeonly messages.
+ * If a message is writeonly, it will not be recognized during the parsing process.
+ * This can be used to save memory, if the message is only used for sending and not for receiving.
+ *
+{# the messages of every generated file #}
+{% for item in messages %}
+ * #define {{ item }}_writeonly 1
+{% endfor %}
+ *
+ * Static size configuration of strings or byte arrays.
+ * If a string or byte array field is configured with a static size, it will be allocated with that size.
+ * Either this, or a callback needs to be set.
+ *
+{% for item in arrays %}
+ * #define {{ item }}_size 0
+{% endfor %}
+ *
+ * Configuration of repeated fields.
+ * If a repeated field is configured with a count, it will be allocated with that count.
+ * A repeated string or byte array field also needs the size above, which is the size of each element.
+ * Either this, or a callback needs to be set.
+ *
+{% for item in repeated %}
+ * #define {{ item }}_count 0
+{% endfor %}
+ *
+ * Configuration of callbacks for fields.
+ * If a field is configured with a callback, the callback will be called when the field is parsed.
+ * The callback needs to be implemented by the user, in the namespace of the message, and should have the following
+ * signature:
+ * bool <message name>_<field name>_callback({{ p }}::Decoder<>& decoder, const {{ p }}::ItemDescriptor* dsc,
+ *                                           pb_u16 len, void** data);
+ *
+{% for item in callbacks %}
+ * #define {{ item }}_callback_en 1
+{% endfor %}
+ */
+
+#endif /* {{ P }}_CONFIG_DEFAULT_H */

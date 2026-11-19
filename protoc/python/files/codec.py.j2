@@ -1,0 +1,659 @@
+# cython: language_level=3, boundscheck=False, wraparound=False, cdivision=True, annotation_typing=False
+#
+# Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted
+# provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of
+#    conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+#    conditions and the following disclaimer in the documentation and/or other materials provided
+#    with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+#    endorse or promote products derived from this software without specific prior written
+#    permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+# OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""
+{{ p }}_codec - protobuf wire codec and message base classes used by the generated *_pb modules.
+
+This module is plain Python and runs anywhere. Compiling it with Cython (see {{ p }}_build_ext.py)
+replaces it with a C extension that has the identical API but much faster encode/decode loops;
+the {{ p }}_codec.pxd next to this file only adds C type declarations and is ignored by Python.
+
+Supported field types: uint32, sint32, bool, enum, fixed32, sfixed32, float, bytes, string and
+embedded messages, singular or repeated (repeated scalars are written packed). Presence follows the
+C/C++ generators: every optional / oneof / bytes / string / message field owns one bit of the
+message's `_presence` bit field, plain proto3 scalars are omitted from the wire while they hold
+their default value. Nothing is encoded while fields are assigned, serialize() writes the message.
+"""
+
+import struct as _struct
+from enum import IntEnum as _IntEnum
+from math import copysign as _copysign
+from operator import index as _index
+from typing import Any as _Any, Iterable as _Iterable, SupportsIndex as _SupportsIndex, TextIO as _TextIO
+from typing import TypeVar as _TypeVar
+import sys as _sys
+
+_T = _TypeVar("_T")
+_M = _TypeVar("_M", bound="Message")
+
+COMPILED = not __file__.endswith((".py", ".pyc"))
+
+# Messages nested deeper than this (root included) are rejected, see DecodeErrorCode.DEPTH_EXCEEDED.
+DEFAULT_MAX_DEPTH = 100
+
+# Layout of Message.print()/str(), same defaults as the C/C++ <PREFIX>_INDENT_SIZE / <PREFIX>_CHARS_PER_LINE.
+INDENT_SIZE = 2
+CHARS_PER_LINE = 16
+
+# Field kinds; the order matters: varint kinds <= K_ENUM, 32-bit kinds <= K_FLOAT, the rest is length-delimited.
+K_UINT32 = 0
+K_SINT32 = 1
+K_BOOL = 2
+K_ENUM = 3
+K_FIXED32 = 4
+K_SFIXED32 = 5
+K_FLOAT = 6
+K_BYTES = 7
+K_STRING = 8
+K_MESSAGE = 9
+
+# Field labels.
+L_SINGLE = 0    # proto3 scalar without presence: default value is not written
+L_OPTIONAL = 1  # explicit presence: written whenever its presence bit is set
+L_REPEATED = 2
+
+_KINDS = {
+    "uint32": K_UINT32, "sint32": K_SINT32, "bool": K_BOOL, "enum": K_ENUM,
+    "fixed32": K_FIXED32, "sfixed32": K_SFIXED32, "float": K_FLOAT,
+    "bytes": K_BYTES, "string": K_STRING, "message": K_MESSAGE,
+}
+_LABELS = {"single": L_SINGLE, "optional": L_OPTIONAL, "repeated": L_REPEATED}
+
+_PACK_FLOAT = _struct.Struct("<f").pack
+_PACK_BITS = _struct.Struct("<I").pack
+_UNPACK_FLOAT = _struct.Struct("<f").unpack
+_list_append = list.append
+
+
+class DecodeErrorCode(_IntEnum):
+    """Reason of a DecodeError; the numbers match the DecodeError values of the C/C++ generators."""
+    UNKNOWN_WIRETYPE = 1
+    UNEXPECTED_EOF = 2
+    ONEOF_ERROR = 4
+    VARINT_OVERFLOW = 7
+    UNKNOWN_TAG = 8
+    DEPTH_EXCEEDED = 9
+    INVALID_UTF8 = 10
+    WIRETYPE_MISMATCH = 11
+
+
+class CodecError(Exception):
+    """Base class of the errors raised by this module."""
+
+
+class EncodeError(CodecError, ValueError):
+    """A field holds a value that cannot be encoded (wrong type or out of range)."""
+
+
+class DecodeError(CodecError):
+    """The input is not a valid message; `code` is a DecodeErrorCode."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+    def __reduce__(self):
+        return (DecodeError, (self.code, str(self)))
+
+
+def Field(number, name, attr, type, label="single", bit=-1, oneof=None, sub=None):
+    """Describe one message field for register(); `attr` is the slot holding the value, `bit` its presence bit."""
+    return (number, name, attr, type, label, bit, oneof, sub)
+
+
+def _varint_bytes(value):
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _zero(kind, sub):
+    if kind == K_BOOL:
+        return False
+    if kind == K_FLOAT:
+        return 0.0
+    if kind == K_ENUM:
+        return sub.get(0, 0)
+    return 0
+
+
+def register(cls, fields):
+    """Attach the field table of a generated message class; called once per class at import time."""
+    declared = []
+    members = {}
+    for number, name, attr, type_name, label_name, bit, oneof, sub in fields:
+        kind = _KINDS[type_name]
+        label = _LABELS[label_name]
+        if kind == K_ENUM:
+            sub = dict(sub._value2member_map_)
+        if label == L_REPEATED and kind < K_BYTES:
+            wire = 2
+        else:
+            wire = 0 if kind <= K_ENUM else (5 if kind <= K_FLOAT else 2)
+        mask = (1 << bit) if bit >= 0 else 0
+        if oneof:
+            members[oneof] = members.get(oneof, 0) | mask
+        declared.append((number, attr, kind, label, mask, oneof, sub, name, _varint_bytes((number << 3) | wire)))
+
+    table = []
+    defaults = []
+    for number, attr, kind, label, mask, oneof, sub, name, tag in declared:
+        group = members[oneof] & ~mask if oneof else 0  # presence bits of the other members of its oneof
+        table.append((number, attr, kind, label, mask, group, sub, name, tag))
+        defaults.append((attr, _zero(kind, sub) if label == L_SINGLE and kind <= K_FLOAT else None))
+    cls._fields_decl = tuple(table)
+    cls._fields = tuple(sorted(table, key=lambda f: f[0]))
+    cls._index = {f[0]: f for f in table}
+    cls._defaults = tuple(defaults)
+
+
+class Message(object):
+    """Base class of the generated message classes."""
+
+    __slots__ = ("_presence",)
+
+    _fields_decl = ()
+    _fields = ()
+    _index = {}
+    _defaults = ()
+
+    def serialize(self) -> bytes:
+        """Encode the message; raises EncodeError for a value that does not fit its field."""
+        return encode(self)
+
+    def deserialize(self: _M, data: bytes | bytearray | memoryview, max_depth: int = DEFAULT_MAX_DEPTH,
+                    strict: bool = False) -> _M:
+        """
+        Replace the content of this message by the decoded `data` and return self.
+
+        max_depth: number of message levels (this one included) accepted before DEPTH_EXCEEDED.
+        strict: raise for unknown field numbers, mismatching wire types and several set members of
+                one oneof instead of skipping/overwriting them.
+        Raises DecodeError; the message is left partially filled in that case.
+        """
+        self.clear()
+        decode(self, data, max_depth, strict)
+        return self
+
+    def clear(self: _M) -> _M:
+        """Reset every field to its default and mark all of them as not set."""
+        self._presence = 0
+        for attr, default in type(self)._defaults:
+            setattr(self, attr, default)
+        return self
+
+    def init(self: _M, **kwargs: _Any) -> _M:
+        """Assign the given fields (None is ignored) and return self."""
+        for name, value in kwargs.items():
+            if value is not None:
+                setattr(self, name, value)
+        return self
+
+    def print(self, file: _TextIO | None = None) -> None:
+        """Write the message as text to `file` (default: stdout), in the layout of the C/C++ print()."""
+        (file or _sys.stdout).write(str(self))
+
+    def __eq__(self, other):
+        if type(other) is not type(self):
+            return NotImplemented
+        return self.serialize() == other.serialize()
+
+    def __repr__(self):
+        args = []
+        presence = self._presence
+        for number, attr, kind, label, mask, group, sub, name, tag in type(self)._fields_decl:
+            value = getattr(self, attr)
+            if _is_unset(presence, kind, label, mask, value):
+                continue
+            if label == L_SINGLE and _is_default(kind, value) == 1:
+                continue
+            args.append("%s=%r" % (name, value))
+        return "%s(%s)" % (type(self).__name__, ", ".join(args))
+
+    def __str__(self):
+        out = ["%s:\n" % type(self).__name__]
+        _print_message(out, self, INDENT_SIZE)
+        return "".join(out)
+
+
+class MessageList(list[_T]):
+    """
+    A list of messages of one class: type-checked, with add() to create and append an element.
+
+    The generated classes use a subclass per repeated message field whose add() lists the fields of the
+    element as typed, documented parameters.
+    """
+
+    __slots__ = ("_cls",)
+
+    def __init__(self, cls, items=()):
+        list.__init__(self)
+        self._cls = cls
+        self.extend(items)
+
+    def _check(self, value):
+        if not isinstance(value, self._cls):
+            raise TypeError("Expected %s but got %s" % (self._cls.__name__, type(value).__name__))
+        return value
+
+    def add(self, *args: _Any, **kwargs: _Any) -> _T:
+        """Create a new element from the constructor arguments, append it and return it."""
+        item = self._cls(*args, **kwargs)
+        list.append(self, item)
+        return item
+
+    def append(self, value: _T) -> None:
+        list.append(self, self._check(value))
+
+    def extend(self, values: _Iterable[_T]) -> None:
+        list.extend(self, [self._check(v) for v in values])
+
+    def insert(self, index: _SupportsIndex, value: _T) -> None:
+        list.insert(self, index, self._check(value))
+
+    def __setitem__(self, index, value):
+        if isinstance(index, slice):
+            value = [self._check(v) for v in value]
+        else:
+            self._check(value)
+        list.__setitem__(self, index, value)
+
+    def __iadd__(self, values):
+        self.extend(values)
+        return self
+
+    def __reduce__(self):
+        return (_restore_list, (type(self), self._cls, list(self)))
+
+
+def _restore_list(kind, cls, items):
+    """Unpickle a MessageList or one of its generated subclasses, whose constructors differ."""
+    result = kind.__new__(kind)
+    MessageList.__init__(result, cls, items)
+    return result
+
+
+def _is_unset(presence, kind, label, mask, value):
+    """True when a field with presence (or a repeated one) holds nothing that is worth writing/printing."""
+    if value is None:
+        return True
+    if label == L_REPEATED:
+        return not value
+    if label == L_OPTIONAL:
+        if kind == K_MESSAGE:
+            # a child that was only read is not set, unless it was filled afterwards
+            return value is None or (not (presence & mask) and not value.serialize())
+        return not (presence & mask)
+    return False
+
+
+def _format_scalar(kind, sub, value):
+    if kind == K_ENUM:
+        member = sub.get(value)
+        return member.name if member is not None else str(int(value))
+    if kind == K_BOOL:
+        return "1" if value else "0"
+    if kind == K_FLOAT:
+        return "%g" % value
+    return str(int(value))
+
+
+def _print_chunks(out, data, kind, indent):
+    """Bytes as upper-case hex pairs, strings as text; CHARS_PER_LINE items per line like the C/C++ helpers."""
+    pad = " " * indent
+    if kind == K_BYTES:
+        data = bytes(data)
+        for start in range(0, len(data), CHARS_PER_LINE):
+            out.append(pad + "".join("%02X " % b for b in data[start:start + CHARS_PER_LINE]) + "\n")
+    else:
+        for start in range(0, len(data), CHARS_PER_LINE):
+            out.append(pad + data[start:start + CHARS_PER_LINE] + "\n")
+
+
+def _print_message(out, msg, indent):
+    """Text layout of the C/C++ print(): `name: value` lines, `name: ` headers for lists, bytes, strings, messages."""
+    presence = msg._presence
+    pad = " " * indent
+    inner = indent + INDENT_SIZE
+    for number, attr, kind, label, mask, group, sub, name, tag in type(msg)._fields_decl:
+        value = getattr(msg, attr)
+        if _is_unset(presence, kind, label, mask, value):
+            continue
+        if label == L_REPEATED and kind < K_BYTES:
+            out.append("%s%s: \n" % (pad, name))
+            for item in value:
+                out.append("%s%s\n" % (" " * inner, _format_scalar(kind, sub, item)))
+            continue
+        for item in (value if label == L_REPEATED else (value,)):
+            if kind >= K_BYTES:
+                out.append("%s%s: \n" % (pad, name))
+                if kind == K_MESSAGE:
+                    _print_message(out, item, inner)
+                else:
+                    _print_chunks(out, item, kind, inner)
+            else:
+                out.append("%s%s: %s\n" % (pad, name, _format_scalar(kind, sub, item)))
+
+
+# ----------------------------------------------------------------------------------------------
+# Encoder
+# ----------------------------------------------------------------------------------------------
+
+def encode(msg):
+    """Encode a message instance to bytes."""
+    out = bytearray()
+    _encode_message(out, msg)
+    return bytes(out)
+
+
+def _put_varint(out, value):
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return 0
+
+
+def _is_default(kind, value):
+    if kind == K_BOOL:
+        return 0 if value else 1
+    if kind == K_FLOAT:
+        return 1 if value == 0 and _copysign(1.0, value) > 0 else 0
+    return 1 if value == 0 else 0
+
+
+def _to_bytes(value, kind):
+    if kind == K_STRING:
+        return value.encode("utf-8")
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise TypeError("expected a bytes-like object, got %s" % type(value).__name__)
+    return bytes(value)
+
+
+def _put_scalar(out, kind, value):
+    if kind == K_BOOL:
+        out.append(1 if value else 0)
+    elif kind == K_FLOAT:
+        out += _PACK_FLOAT(value)
+    else:
+        # integers only: floats and strings must fail here (a compiled build would otherwise truncate them)
+        if type(value) is not int:
+            value = _index(value)
+        number = value
+        if kind == K_UINT32 or kind == K_ENUM:
+            if number < 0 or number > 0xFFFFFFFF:
+                raise ValueError("%r does not fit into 32 unsigned bits" % (value,))
+            _put_varint(out, number)
+        elif kind == K_SINT32:
+            if number < -0x80000000 or number > 0x7FFFFFFF:
+                raise ValueError("%r does not fit into 32 signed bits" % (value,))
+            _put_varint(out, (number << 1) if number >= 0 else (((-number) << 1) - 1))
+        else:
+            if kind == K_FIXED32:
+                if number < 0 or number > 0xFFFFFFFF:
+                    raise ValueError("%r does not fit into 32 unsigned bits" % (value,))
+            elif number < -0x80000000 or number > 0x7FFFFFFF:
+                raise ValueError("%r does not fit into 32 signed bits" % (value,))
+            if number < 0:
+                number += 0x100000000
+            out.append(number & 0xFF)
+            out.append((number >> 8) & 0xFF)
+            out.append((number >> 16) & 0xFF)
+            out.append((number >> 24) & 0xFF)
+    return 0
+
+
+def _encode_repeated(out, values, kind, tag):
+    if kind == K_MESSAGE:
+        for item in values:
+            body = bytearray()
+            _encode_message(body, item)
+            out += tag
+            _put_varint(out, len(body))
+            out += body
+    elif kind >= K_BYTES:
+        for item in values:
+            data = _to_bytes(item, kind)
+            out += tag
+            _put_varint(out, len(data))
+            out += data
+    else:
+        body = bytearray()
+        for item in values:
+            _put_scalar(body, kind, item)
+        if body:
+            out += tag
+            _put_varint(out, len(body))
+            out += body
+    return 0
+
+
+def _encode_message(out, msg):
+    presence = msg._presence
+    for number, attr, kind, label, mask, group, sub, name, tag in type(msg)._fields:
+        value = getattr(msg, attr)
+        if value is None:
+            continue
+        try:
+            if label == L_REPEATED:
+                _encode_repeated(out, value, kind, tag)
+            elif label == L_OPTIONAL:
+                if kind == K_MESSAGE:
+                    body = bytearray()
+                    _encode_message(body, value)
+                    # a child that was only read (presence bit not set) is written once it holds something
+                    if body or presence & mask:
+                        out += tag
+                        _put_varint(out, len(body))
+                        out += body
+                elif presence & mask:
+                    if kind >= K_BYTES:
+                        data = _to_bytes(value, kind)
+                        out += tag
+                        _put_varint(out, len(data))
+                        out += data
+                    else:
+                        out += tag
+                        _put_scalar(out, kind, value)
+            elif _is_default(kind, value) == 0:
+                out += tag
+                _put_scalar(out, kind, value)
+        except (TypeError, ValueError, OverflowError, AttributeError, _struct.error) as exc:
+            raise EncodeError("cannot encode %s.%s: %s" % (type(msg).__name__, name, exc)) from exc
+    return 0
+
+
+# ----------------------------------------------------------------------------------------------
+# Decoder
+# ----------------------------------------------------------------------------------------------
+
+def decode(msg, data, max_depth=DEFAULT_MAX_DEPTH, strict=False):
+    """Fill `msg` from `data`; see Message.deserialize()."""
+    if type(data) is not bytes:
+        if not isinstance(data, (bytearray, memoryview)):
+            raise TypeError("expected a bytes-like object, got %s" % type(data).__name__)
+        data = bytes(data)
+    _decode_message(msg, data, 0, len(data), 0, max_depth, strict)
+
+
+def _get_varint(buf, pos, end):
+    result = 0
+    shift = 0
+    while pos < end:
+        byte = buf[pos]
+        pos += 1
+        if shift == 63 and byte > 1:
+            raise DecodeError(DecodeErrorCode.VARINT_OVERFLOW, "varint longer than 64 bits at offset %d" % pos)
+        result |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return result, pos
+        shift += 7
+    raise DecodeError(DecodeErrorCode.UNEXPECTED_EOF, "input ends inside a varint at offset %d" % pos)
+
+
+def _get_length(buf, pos, end):
+    length, pos = _get_varint(buf, pos, end)
+    remaining = end - pos
+    if length > remaining:
+        raise DecodeError(DecodeErrorCode.UNEXPECTED_EOF,
+                          "length %d at offset %d exceeds the remaining %d bytes" % (length, pos, remaining))
+    return length, pos
+
+
+def _get_raw(buf, pos, end, kind):
+    """Read one scalar as its unsigned 32-bit wire value (varint or little-endian fixed32)."""
+    if kind <= K_ENUM:
+        raw, pos = _get_varint(buf, pos, end)
+        if raw > 0xFFFFFFFF:
+            raise DecodeError(DecodeErrorCode.VARINT_OVERFLOW, "value does not fit into 32 bits at offset %d" % pos)
+        return raw, pos
+    if end - pos < 4:
+        raise DecodeError(DecodeErrorCode.UNEXPECTED_EOF, "input ends inside a 32-bit value at offset %d" % pos)
+    raw = buf[pos + 3]
+    raw = (raw << 8) | buf[pos + 2]
+    raw = (raw << 8) | buf[pos + 1]
+    raw = (raw << 8) | buf[pos]
+    return raw, pos + 4
+
+
+def _convert(kind, raw, sub):
+    """Turn a wire value from _get_raw() into the Python value of a field of this kind."""
+    if kind == K_UINT32 or kind == K_FIXED32:
+        return raw
+    if kind == K_SINT32:
+        number = raw
+        return -((number >> 1) + 1) if number & 1 else number >> 1
+    if kind == K_BOOL:
+        return raw != 0
+    if kind == K_ENUM:
+        enum_map = sub
+        return enum_map.get(raw, raw)
+    if kind == K_SFIXED32:
+        number = raw
+        return number - 0x100000000 if number >= 0x80000000 else number
+    return _UNPACK_FLOAT(_PACK_BITS(raw))[0]
+
+
+def _skip(buf, pos, end, wire):
+    if wire == 0:
+        value, pos = _get_varint(buf, pos, end)
+    elif wire == 2:
+        length, pos = _get_length(buf, pos, end)
+        pos += length
+    elif wire == 1 or wire == 5:
+        size = 8 if wire == 1 else 4
+        if end - pos < size:
+            raise DecodeError(DecodeErrorCode.UNEXPECTED_EOF, "input ends inside a field at offset %d" % pos)
+        pos += size
+    else:
+        raise DecodeError(DecodeErrorCode.UNKNOWN_WIRETYPE, "unsupported wire type %d at offset %d" % (wire, pos))
+    return pos
+
+
+def _repeated_list(msg, attr, kind, sub):
+    values = getattr(msg, attr)
+    if values is None:
+        # the property of the field creates its list, of the generated subclass for repeated messages
+        values = getattr(msg, attr[1:])
+    return values
+
+
+def _decode_message(msg, buf, pos, end, depth, max_depth, strict):
+    index = type(msg)._index
+    presence = msg._presence
+    while pos < end:
+        key, pos = _get_varint(buf, pos, end)
+        if key > 0xFFFFFFFF:
+            raise DecodeError(DecodeErrorCode.VARINT_OVERFLOW, "field key does not fit into 32 bits at offset %d" % pos)
+        wire = key & 7
+        field = index.get(key >> 3)
+        if field is None:
+            if strict:
+                raise DecodeError(DecodeErrorCode.UNKNOWN_TAG,
+                                  "unknown field number %d in %s" % (key >> 3, type(msg).__name__))
+            pos = _skip(buf, pos, end, wire)
+            continue
+        number, attr, kind, label, mask, group, sub, name, tag = field
+
+        if label == L_REPEATED and kind < K_BYTES and wire == 2:
+            # packed scalars
+            length, pos = _get_length(buf, pos, end)
+            stop = pos + length
+            values = _repeated_list(msg, attr, kind, sub)
+            while pos < stop:
+                raw, pos = _get_raw(buf, pos, stop, kind)
+                _list_append(values, _convert(kind, raw, sub))
+            continue
+
+        expected = 0 if kind <= K_ENUM else (5 if kind <= K_FLOAT else 2)
+        if wire != expected:
+            if strict:
+                raise DecodeError(DecodeErrorCode.WIRETYPE_MISMATCH,
+                                  "wire type %d for %s.%s, expected %d" % (wire, type(msg).__name__, name, expected))
+            pos = _skip(buf, pos, end, wire)
+            continue
+
+        if kind == K_MESSAGE:
+            length, pos = _get_length(buf, pos, end)
+            if depth + 1 >= max_depth:
+                raise DecodeError(DecodeErrorCode.DEPTH_EXCEEDED,
+                                  "messages nested deeper than %d levels at offset %d" % (max_depth, pos))
+            value = sub()
+            _decode_message(value, buf, pos, pos + length, depth + 1, max_depth, strict)
+            pos += length
+        elif kind >= K_BYTES:
+            length, pos = _get_length(buf, pos, end)
+            value = buf[pos:pos + length]
+            pos += length
+            if kind == K_STRING:
+                try:
+                    value = value.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise DecodeError(DecodeErrorCode.INVALID_UTF8,
+                                      "%s.%s is not valid UTF-8: %s" % (type(msg).__name__, name, exc)) from exc
+        else:
+            raw, pos = _get_raw(buf, pos, end, kind)
+            value = _convert(kind, raw, sub)
+
+        if label == L_REPEATED:
+            _list_append(_repeated_list(msg, attr, kind, sub), value)
+            continue
+        if presence & group:
+            if strict:
+                raise DecodeError(DecodeErrorCode.ONEOF_ERROR,
+                                  "%s.%s set together with another member of its oneof" % (type(msg).__name__, name))
+            presence &= ~group
+        setattr(msg, attr, value)
+        presence |= mask
+    msg._presence = presence
+    return pos

@@ -1,0 +1,16 @@
+{# The repository link of the theme's bottom bar, without its Previous/Next links. #}
+{%- if config.repo_url %}
+<div class="rst-versions" role="note" aria-label="{% trans %}Versions{% endtrans %}">
+  <span class="rst-current-version">
+    {%- if config.repo_name == 'GitHub' %}
+    <span><a href="{{ config.repo_url }}" class="fa fa-github"> GitHub</a></span>
+    {%- elif config.repo_name == 'Bitbucket' %}
+    <span><a href="{{ config.repo_url }}" class="icon icon-bitbucket"> BitBucket</a></span>
+    {%- elif config.repo_name == 'GitLab' %}
+    <span><a href="{{ config.repo_url }}" class="icon icon-gitlab"> GitLab</a></span>
+    {%- elif config.repo_name %}
+    <span><a href="{{ config.repo_url }}" class="fa fa-code-fork"> {{ config.repo_name }}</a></span>
+    {%- endif %}
+  </span>
+</div>
+{%- endif %}

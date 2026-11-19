@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package callbackpkg;
+
+// Standalone message with a callback-driven field (see SAMPLE_CALLBACK /
+// HIKARIPB_CALLBACK plus the per-field callbackpkg_CallbackMsg_value_callback_en
+// override in the test configs) used to exercise the generated callback path
+// for a plain scalar field.
+message CallbackMsg {
+  uint32 value = 1;
+}
+
+// Nested message type routed through CallbackParent's field callbacks below;
+// each callback decodes it via {{PREFIX}}_decode_item()/decode_item() into
+// caller-provided storage instead of the generated fixed struct member.
+message CallbackChild {
+  uint32 id = 1;
+}
+
+// Exercises callback-driven decoding for field kinds beyond a plain scalar:
+// a single embedded submessage, a repeated embedded submessage, a repeated
+// scalar and a bytes field - each routed through its own
+// callbackpkg_CallbackParent_<field>_callback_en override in the test
+// configs.
+message CallbackParent {
+  uint32 value = 1;
+  CallbackChild child = 2;
+  repeated CallbackChild children = 3;
+  repeated uint32 numbers = 4;
+  bytes payload = 5;
+}
+
+// Repeated bytes and string fields: `chunks` is routed through a callback (one call per element, the
+// callback owns the storage), `names` is stored in the generated struct.
+message CallbackChunks {
+  repeated bytes chunks = 1;
+  repeated string names = 2;
+}

@@ -1,0 +1,213 @@
+{# Encode-side counterpart to message.j2: one *_WrHandle type + set_*/add_* function
+   per field, rendered separately and spliced into message.j2 via {{proxy}}. #}
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+typedef struct {{fullname}}_WrHandle { {{ P }}_ENC_CTX_DEF(void* ctx;) struct {{ p }}_EncodeHandle h; } {{fullname}}_WrHandle;
+
+{# one setter/adder per field, branched by shape: nested message / bytes / repeated scalar / plain scalar #}
+{% for item in items %}
+
+{% if item.type == "message" %}
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+static inline struct {{item.c_type}}_WrHandle {{fullname}}_add_{{item.name}} (struct {{fullname}}_WrHandle* handle){
+    return {{item.c_type}}_submessage(&handle->h, {{ P }}_ENC_CTX_DEF(handle->ctx,) {{item.tag}});
+}
+{% elif item.type == "bytes" %}
+/** Handle for writing to the {{item.name}} bytes field */
+typedef struct {{fullname}}_{{item.name}}_WrHandle { {{ P }}_ENC_CTX_DEF(void* ctx;) struct {{ p }}_EncodeHandle h; } {{fullname}}_{{item.name}}_WrHandle; 
+
+/** Append bytes to the {{item.name}} field */
+static inline void {{fullname}}_{{item.name}}_addBytes(const struct {{fullname}}_{{item.name}}_WrHandle *handle, const pb_u8 *data, pb_u16 len){
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->h.writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_bytes({{ P }}_ENC_CTX_DEF(handle->ctx,) data, len);
+}
+/** Finish and clean up the {{item.name}} field */
+static inline void {{fullname}}_{{item.name}}_done( struct {{fullname}}_{{item.name}}_WrHandle *handle){
+    {{ p }}_Handle_destroy({{ P }}_ENC_CTX_DEF(handle->ctx,) &handle->h);
+}
+
+/** Proxy structure for writing to the {{item.name}} bytes field */
+static const struct {{fullname}}_{{item.name}}_WrProxy {
+    /** Write bytes to the {{item.name}} field */
+    void (*const write)(const struct {{fullname}}_{{item.name}}_WrHandle* h, const pb_u8* data, pb_u16 len);
+    /** Finish and clean up the {{item.name}} field */
+    void (*const done)(struct {{fullname}}_{{item.name}}_WrHandle* h);
+} {{fullname}}_{{item.name}}_WrProxyInternal = {
+    .write = &{{fullname}}_{{item.name}}_addBytes,
+    .done = &{{fullname}}_{{item.name}}_done
+};
+
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+static inline struct {{fullname}}_{{item.name}}_WrHandle {{fullname}}_add_{{item.name}}(struct {{fullname}}_WrHandle* handle){
+    struct {{fullname}}_{{item.name}}_WrHandle result;
+    {{ P }}_ENC_CTX_DEF(result.ctx = handle->ctx;)
+    {{ p }}_EncodeHandle_add(&result.h, &handle->h, {{ P }}_ENC_CTX_DEF(handle->ctx,) {{item.tag}});
+    return result;
+}
+
+/** Proxy macro for writing to the {{item.name}} bytes field */
+#define {{fullname}}_{{item.name}}_Wr(VAR, ORIG) \
+{{fullname}}_{{item.name}}_WrHandle VAR##_hdl = (ORIG); \
+const struct {{fullname}}_{{item.name}}_WrProxy *(VAR) = &{{fullname}}_{{item.name}}_WrProxyInternal;
+
+ {% else %}
+ {% if item.rpt %}
+{# repeated scalar field: its own WrHandle + _add()/_done(), same shape as the bytes case above #}
+/** Handle for writing to the repeated {{item.name}} field */
+typedef struct {{fullname}}_{{item.name}}_WrHandle { {{ P }}_ENC_CTX_DEF(void* ctx;) struct {{ p }}_EncodeHandle h; } {{fullname}}_{{item.name}}_WrHandle;
+
+/** Add an element to the repeated {{item.name}} field */
+static inline void {{fullname}}_{{item.name}}_add(const struct {{fullname}}_{{item.name}}_WrHandle *handle, {{item.param}} value){
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->h.writeToken != PB_FALSE);)
+    (void)handle;
+ {% if item.type == "fixed" %}
+    {{ p }}_encode_fixed_{{item.suffix}}({{ P }}_ENC_CTX_DEF(handle->ctx,) ({{item.c_type}}) value);
+ {% elif item.type == "varint" %}
+    {{ p }}_encode_varint_{{item.suffix}}({{ P }}_ENC_CTX_DEF(handle->ctx,) ({{item.c_type}}) value);
+ {% endif %}
+}
+
+/** Finish and clean up the repeated {{item.name}} field */
+static inline void {{fullname}}_{{item.name}}_done( struct {{fullname}}_{{item.name}}_WrHandle *handle){
+    {{ p }}_Handle_destroy({{ P }}_ENC_CTX_DEF(handle->ctx,) &handle->h);
+}
+
+/** Proxy structure for writing to the repeated {{item.name}} field */
+static const struct {{fullname}}_{{item.name}}_WrProxy { 
+    /** Add an element to the repeated {{item.name}} field */
+    void (*const add)(const struct {{fullname}}_{{item.name}}_WrHandle* h, {{item.param}} val);
+    /** Finish and clean up the repeated {{item.name}} field */
+    void (*const done)(struct {{fullname}}_{{item.name}}_WrHandle* h);
+} {{fullname}}_{{item.name}}_WrProxyInternal = {
+    .add = &{{fullname}}_{{item.name}}_add,
+    .done = &{{fullname}}_{{item.name}}_done
+};
+
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+static inline struct {{fullname}}_{{item.name}}_WrHandle {{fullname}}_add_{{item.name}}(struct {{fullname}}_WrHandle* handle){
+    struct {{fullname}}_{{item.name}}_WrHandle result;
+    {{ P }}_ENC_CTX_DEF(result.ctx = handle->ctx;)
+    {{ p }}_EncodeHandle_add(&result.h, &handle->h, {{ P }}_ENC_CTX_DEF(handle->ctx,) {{item.tag}});
+    return result;
+}
+
+/** Proxy macro for writing to the repeated {{item.name}} field */
+#define {{fullname}}_{{item.name}}_Wr(VAR, ORIG) \
+{{fullname}}_{{item.name}}_WrHandle VAR##_hdl = (ORIG); \
+const struct {{fullname}}_{{item.name}}_WrProxy *(VAR) = &{{fullname}}_{{item.name}}_WrProxyInternal;
+
+ {% else %}
+{# plain (non-repeated, non-bytes) scalar field: a single set_<name>() setter #}
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+ {% if item.type == "fixed" %}
+static inline void {{fullname}}_set_{{ item.name }}(const struct {{fullname}}_WrHandle* h, {{ item.param }} value) {
+    {{ p }}_EncodeHandle_addFixed_{{item.suffix}}({{ P }}_ENC_CTX_DEF(h->ctx,) &h->h, {{item.tag}}, value);
+}
+ {% elif item.type == "varint" %}
+ static inline void {{fullname}}_set_{{ item.name }}(const struct {{fullname}}_WrHandle* h, {{ item.param }} value) {
+    {{ p }}_EncodeHandle_addVarint_{{item.suffix}}({{ P }}_ENC_CTX_DEF(h->ctx,) &h->h, {{item.tag}}, ({{item.c_type}})value);
+ }
+ {% endif %}
+ {% endif %}
+ {% endif %}
+ {% endfor %}
+
+/** Finish and clean up the {{fullname}} submessage */
+ static inline void {{fullname}}_destroy_submessage(struct {{fullname}}_WrHandle* h) {
+     {{ p }}_Handle_destroy({{ P }}_ENC_CTX_DEF(h->ctx,) &h->h);
+ }
+
+{# vtable-style proxy struct: "sub" (submessage, has a .done) and "top" (root message, no .done) variants #}
+{% for type in ["sub", "top"]%}
+
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+static const struct {{fullname}}_WrProxy{{"Top" if type == "top" else ""}} {
+{% for item in items %}
+{%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{% if item.type == "message" %}
+    struct {{item.c_type}}_WrHandle (* const add_{{item.name}}) (struct {{fullname}}_WrHandle* h);
+{% elif item.type == "bytes" or item.rpt%}
+    struct {{fullname}}_{{item.name}}_WrHandle (* const add_{{item.name}})(struct {{fullname}}_WrHandle* h);
+{% elif item.type in ["fixed", "varint"] %}
+    void (* const set_{{ item.name }})(const struct {{fullname}}_WrHandle* h, {{ item.param }} value);
+{% endif %}
+{% endfor %}
+{%if type != "top" %}
+    /** Finish and clean up the {{fullname}} submessage */
+    void (*const done)(struct {{fullname}}_WrHandle* h);
+{% elif not items %}
+    /** No field to write, but a struct needs a member */
+    pb_u8 unused;
+{% endif %}
+} {{fullname}}_WrProxy{{"Top" if type == "top" else ""}}Internal = {
+{% for item in items %}
+{% if item.type in ["message", "bytes"] or item.rpt %}
+    .add_{{item.name}} = &{{fullname}}_add_{{item.name}},
+{% else %}
+    .set_{{ item.name }} = &{{fullname}}_set_{{ item.name }},
+{% endif %}
+{% endfor %}
+{%if type != "top" %}
+    .done = &{{fullname}}_destroy_submessage
+{% elif not items %}
+    .unused = 0U
+{% endif %}
+};
+{%endfor%}
+
+{# _create() starts a top-level message; _submessage() starts a nested one under a parent handle #}
+{% for operation in ["create", "submessage"]%}
+{% if operation == "create" %}
+/** Start writing a new top-level message of type {{fullname}} */
+static inline struct {{fullname}}_WrHandle {{fullname}}_{{operation}}({{ P }}_ENC_CTX_ONLY(void* context)) {
+    struct {{fullname}}_WrHandle result;
+    {{ P }}_ENC_CTX_DEF(result.ctx = context;)
+    {{ p }}_MessageHandle_init(&result.h);
+    return result;
+{% else %}
+/** Start writing a submessage of type {{fullname}} as the field with the given tag of the parent message */
+static inline struct {{fullname}}_WrHandle {{fullname}}_{{operation}}(struct {{ p }}_EncodeHandle* handle, {{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 tag) {
+    struct {{fullname}}_WrHandle result;
+    {{ P }}_ENC_CTX_DEF(result.ctx = ctx;)
+    {{ p }}_EncodeHandle_add(&result.h, handle, {{ P }}_ENC_CTX_DEF(ctx,) tag);
+    return result;
+{% endif %}
+}
+
+{% endfor %}
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+#define {{fullname}}_Wr(VAR, ORIG) \
+{{fullname}}_WrHandle VAR##_hdl = (ORIG); \
+const struct {{fullname}}_WrProxy *(VAR) = &{{fullname}}_WrProxyInternal;
+
+#if {{ P }}_ENABLE_MULTI_ENC
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+#define {{fullname}}_WrTop(VAR, CTX) \
+{{fullname}}_WrHandle VAR##_hdl = {{fullname}}_create({{ P }}_ENC_CTX_DEF((CTX))); \
+const struct {{fullname}}_WrProxyTop *(VAR) = &{{fullname}}_WrProxyTopInternal;
+#else
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+#define {{fullname}}_WrTop(VAR) \
+{{fullname}}_WrHandle VAR##_hdl = {{fullname}}_create(); \
+const struct {{fullname}}_WrProxyTop *(VAR) = &{{fullname}}_WrProxyTopInternal;
+#endif

@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted
+# provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of
+#    conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+#    conditions and the following disclaimer in the documentation and/or other materials provided
+#    with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+#    endorse or promote products derived from this software without specific prior written
+#    permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+# OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+"""
+Optional: compile {{ p }}_codec.py into a C extension (needs Cython, setuptools and a C compiler).
+
+    python {{ p }}_build_ext.py
+
+The extension is written next to {{ p }}_codec.py and is picked up automatically by the next import
+(Python prefers an extension module over a .py file of the same name). Without it, or when this
+build fails, the generated modules keep working on the pure Python implementation.
+"""
+
+import os
+import shutil
+import sys
+import tempfile
+
+
+def main():
+    try:
+        from Cython.Build import cythonize
+        from setuptools import setup
+    except ImportError as exc:
+        print("{{ p }}_build_ext: %s; staying on the pure Python codec (pip install cython setuptools)" % exc)
+        return 1
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    work_dir = tempfile.mkdtemp(prefix="{{ p }}_codec_build_")
+    os.chdir(here)
+    try:
+        setup(
+            name="{{ p }}_codec",
+            ext_modules=cythonize(["{{ p }}_codec.py"], build_dir=work_dir, language_level=3, quiet=True),
+            script_args=["build_ext", "--inplace", "--build-temp", work_dir, "--build-lib", work_dir],
+        )
+    except (Exception, SystemExit) as exc:
+        print("{{ p }}_build_ext: build failed (%s); staying on the pure Python codec" % exc)
+        return 1
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,52 @@
+/*
+ * Test schema of the Sphinx documentation generator.
+ *
+ * The comments are Markdown with Doxygen commands: `code`, *emphasis*, math $t_B$ = 1 / $f$ and
+ * 13:sub:`H`.
+ *
+ * ![](figures/diagram.png)
+ *
+ * Details
+ * =======
+ *
+ * See @ref Item for the data and @ref resOk for the result codes.
+ *
+ * @code{.c}
+ * int x = 1;
+ *
+ * int y = 2;
+ * @endcode
+ *
+ * @section anchored Anchored section
+ * Linked from @ref anchored.
+ */
+
+syntax = "proto3";
+package docs.base;
+
+// Result codes.
+enum Result {
+   resOk = 0;      // Success.
+   resFailed = 1;  // Failure, see @ref Item.kind.
+   /*
+    * Not supported.
+    * @warning Do not rely on it.
+    */
+   resUnsupported = 2;
+}
+
+/*
+ * One item.
+ * @note Items are small.
+ */
+message Item {
+   enum Kind {
+      kindA = 0;  // First kind.
+      kindB = 1;  // Second kind.
+   }
+
+   // Identifier, see @ref docs.base.device.Config.handle.
+   uint32 id = 1;
+   Kind kind = 2;  // Kind of the item, @ref kindA or @ref kindB.
+   optional Result result = 3;
+}

@@ -1,0 +1,441 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_defines.h
+ * @brief   Defines and structures used in the protobuf library.
+ * 
+ * User can define the following macros in {{ p }}_config.h to customize the library. {{ p }}_config_default.h
+ * lists all of them with their defaults, the standard types and features among them:
+ * - {{ P }}_DEBUG: Enable or disable debug features (default: 0).
+ * - {{ P }}_ASSERT: Custom assert macro (default: no-op).
+ * - {{ P }}_PRINT and {{ P }}_PRINTLN: Custom print macros for debug output. Both must be defined to enable printing.
+ * - {{ P }}_CALLBACK: Enable or disable callback functionality (default: 0).
+ * - {{ P }}_ENABLE_MULTI_ENC: Enable or disable support for multiple encoder contexts (default: 0).
+ * - {{ P }}_ENABLE_MULTI_DEC: Enable or disable support for multiple decoder contexts (default: 0).
+ * - {{ P }}_ENABLE_REPEATED_BYTES: Support repeated string and bytes fields, a compile error otherwise (default: 0).
+ * - {{ P }}_ENABLE_FLOAT: Support float fields, a compile error otherwise (default: 0).
+ * - {{ P }}_COMPRESS_ENUMS: Store an enum in the smallest type that holds its largest value, in a pb_u32 otherwise (default: 1).
+ * - {{ P }}_CHARS_PER_LINE: Number of characters per line for printing (default: 16).
+ * - {{ P }}_INDENT_SIZE: Number of spaces for indentation in printing (default: 2).
+ * - {{ P }}_CONTINUE_ON_OVERFLOW: Continue decode after repeated/bytes overflow (default: 0).
+ * - {{ P }}_CONTINUE_ON_CALLBACK_ERROR: Continue decode after callback error (default: 0).
+ * - {{ P }}_CONTINUE_ON_ONEOF_ERROR: Continue decode after oneof conflict (default: 0).
+ * - {{ P }}_ERROR_ON_UNKNOWN_TAG: Treat unknown tag as a decoder error (default: 0).
+ * - {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR: Continue decode after unknown-tag error (default: 0).
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Defines Defines
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Shared generated constants, wire types, and helper declarations.
+ * @{
+ */
+
+#ifndef {{ P }}_DEFINES_H
+#define {{ P }}_DEFINES_H
+
+{# common runtime header: rendered once per protoc invocation, no message/field data in scope #}
+{# the config of the user first, so that it can override every default; the standard types and features and the defaults follow #}
+#include "{{ config.config_path }}{{ p }}_config.h"
+#include "{{ config.include_path }}{{ p }}_types.h"
+#include "{{ config.include_path }}{{ p }}_config_default.h"
+
+{# a value that does not fit the types that hold it would corrupt the stream silently #}
+#if ({{ P }}_ENC_PAD_LENGTH < 1) || ({{ P }}_ENC_PAD_LENGTH > 5)
+#error "{{ P }}_ENC_PAD_LENGTH must be 1 to 5: the length of a field is a varint of at most 5 bytes"
+#endif
+
+/** The largest length of a field that the {{ P }}_ENC_PAD_LENGTH reserved bytes can hold. */
+#if {{ P }}_ENC_PAD_LENGTH >= 5
+#define {{ P }}_ENC_MAX_LENGTH 0xFFFFFFFFU
+#else
+#define {{ P }}_ENC_MAX_LENGTH (((pb_u32)1U << (7U * {{ P }}_ENC_PAD_LENGTH)) - 1U)
+#endif
+
+#if ({{ P }}_DEC_MAX_DEPTH < 1) || ({{ P }}_DEC_MAX_DEPTH > 255)
+#error "{{ P }}_DEC_MAX_DEPTH must be 1 to 255: the decoder counts the depth in a pb_u8"
+#endif
+
+#if ({{ P }}_DEC_VARINT_UNROLL < 0) || ({{ P }}_DEC_VARINT_UNROLL > 5)
+#error "{{ P }}_DEC_VARINT_UNROLL must be 0 to 5: a varint has 5 bytes at most"
+#endif
+
+#if {{ P }}_CHARS_PER_LINE < 1
+#error "{{ P }}_CHARS_PER_LINE must be at least 1: the print functions print that many bytes per line"
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+{# *_CTX_DEF(...) = the context parameter or argument, followed by a comma when more parameters follow it; *_CTX_ONLY(...) = the
+   context as the only parameter of a function, void when there is none, so that every declaration is a prototype #}
+#if {{ P }}_ENABLE_MULTI_ENC
+#define {{ P }}_ENC_CTX_DEF(...) __VA_ARGS__
+#define {{ P }}_ENC_CTX_ONLY(...) __VA_ARGS__
+#else
+#define {{ P }}_ENC_CTX_DEF(...)
+#define {{ P }}_ENC_CTX_ONLY(...) void
+#endif
+
+#if {{ P }}_ENABLE_MULTI_DEC
+#define {{ P }}_DEC_CTX_DEF(...) __VA_ARGS__
+#define {{ P }}_DEC_CTX_ONLY(...) __VA_ARGS__
+#else
+#define {{ P }}_DEC_CTX_DEF(...)
+#define {{ P }}_DEC_CTX_ONLY(...) void
+#endif
+
+#if {{ P }}_DEBUG
+#define {{ P }}_DBG_DEF(...) __VA_ARGS__
+#else
+#define {{ P }}_DBG_DEF(...)
+#endif
+
+#if !{{ P }}_PRINT_ENABLE
+#undef {{ P }}_PRINT
+#undef {{ P }}_PRINTLN
+#define {{ P }}_PRINT(fmt, ...)
+#define {{ P }}_PRINTLN(fmt, ...)
+#endif
+
+
+{# I/O hooks the application must implement; ctx param only exists when multi-context support is enabled #}
+/**
+ * @brief User-defined function to read data from the input.
+ * @param ctx Reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @param data Pointer to the buffer to read data into.
+ * @param len Length of data to read.
+ * @return true if read was successful, false otherwise.
+ */
+pb_bool {{ p }}_read({{ P }}_DEC_CTX_DEF(void* ctx,) pb_u8* data, pb_u16 len);
+
+/**
+ * @brief User-defined function to skip data in the input.
+ * @param ctx Reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @param len Length of data to skip.
+ * @return true if skip was successful, false otherwise.
+ */
+pb_bool {{ p }}_skip({{ P }}_DEC_CTX_DEF(void* ctx,) pb_u16 len);
+
+/**
+ * @brief User-defined function to read a byte from the input.
+ * @param ctx Reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @param data Pointer to store the read byte.
+ * @return true if read was successful, false otherwise.
+ */
+pb_bool {{ p }}_pop({{ P }}_DEC_CTX_DEF(void* ctx,) pb_u8* data);
+
+/**
+ * @brief user-defined function to get the current read offset.
+ * @param ctx Reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @return Current read offset.
+ */
+pb_u32 {{ p }}_getReadOffset({{ P }}_DEC_CTX_ONLY(const void* ctx));
+
+/**
+ * @brief User-defined function to write data to the output.
+ * @param ctx Writer context when {{ P }}_ENABLE_MULTI_ENC is enabled.
+ * @param data Pointer to the buffer containing data to write.
+ * @param len Length of data to write.
+ */
+void {{ p }}_write({{ P }}_ENC_CTX_DEF(void* ctx,) const pb_u8* data, pb_u16 len);
+
+/**
+ * @brief User-defined function to set the current write offset.
+ * @param ctx Writer context when {{ P }}_ENABLE_MULTI_ENC is enabled.
+ * @param offset Offset to set.
+ */
+void {{ p }}_setWriteOffset({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 offset);
+
+/**
+ * @brief User-defined function to get the current write offset.
+ * @param ctx Writer context when {{ P }}_ENABLE_MULTI_ENC is enabled.
+ * @return Current write offset.
+ */
+pb_u32 {{ p }}_getWriteOffset({{ P }}_ENC_CTX_ONLY(const void* ctx));
+{# protobuf wire types #}/**
+ * @brief Protobuf wire types used during encoding and decoding.
+ */
+enum {{ p }}_WireType {
+    /** Varint wire type. */
+    {{ P }}_WIRE_VARINT = 0,
+    /** 64-bit fixed wire type. */
+    {{ P }}_WIRE_FIXED64 = 1,
+    /** Length-delimited wire type. */
+    {{ P }}_WIRE_LENGTH_DELIMITED = 2,
+    /** 32-bit fixed wire type. */
+    {{ P }}_WIRE_FIXED32 = 5,
+};
+
+{# decoder status/error codes #}
+/**
+ * @brief Decoder status and error codes.
+ */
+enum {{ p }}_DecodeError {
+    /** No decoder error. */
+    {{ P }}_DECODER_OK = 0,
+    /** Received unknown wire type. */
+    {{ P }}_DECODER_UNKNOWN_WIRETYPE,
+    /** Unexpected end of input while decoding. */
+    {{ P }}_DECODER_UNEXPECTED_EOF,
+    /** Callback function reported an error. */
+    {{ P }}_DECODER_CALLBACK_ERROR,
+    /** Multiple tags appeared inside one oneof union. */
+    {{ P }}_DECODER_ONEOF_ERROR,
+    /** Repeated field storage overflowed. */
+    {{ P }}_DECODER_REPEATED_OVERFLOW,
+    /** Bytes/string storage overflowed. */
+    {{ P }}_DECODER_BYTES_OVERFLOW,
+    /** Varint consumed more than 32-bit payload width. */
+    {{ P }}_DECODER_VARINT_OVERFLOW,
+    /** Unknown protobuf tag was encountered. */
+    {{ P }}_DECODER_UNKNOWN_TAG,
+    /** Message nesting exceeded {{ P }}_DEC_MAX_DEPTH. */
+    {{ P }}_DECODER_DEPTH_EXCEEDED,
+};
+
+/* Forward declarations for types referenced before their full definitions. */
+struct {{ p }}_ItemDescriptor;
+struct {{ p }}_MessageDescriptor;
+
+{# iterative decode stack - avoids recursion for nested messages, see decode.c.j2 decode_msg/tb_msg #}
+/**
+ * @brief One level of the iterative message decode stack.
+ *
+ * Stored inside DecodeContext so tb_msg (called via decode_item callback) can
+ * extend the running decode_msg loop's stack rather than allocating a new one.
+ */
+struct {{ p }}_decodeFrame {
+    pb_u8*                                  msg;        /**< decoded message buffer */
+    const struct {{ p }}_MessageDescriptor* msg_desc;   /**< descriptor for this level */
+    pb_u32                                  max_offset; /**< read-offset limit; 0xFFFFFFFF = no bound */
+};
+
+/**
+ * @brief Decoder runtime context.
+ */
+struct {{ p }}_DecodeContext {
+    /** EOF or fatal parse stop flag. */
+    pb_bool eof;
+    /** Current depth in decode_stack (0 = root level). */
+    pb_u8   decode_depth;
+    /** Last decode error for this context. */
+    enum {{ p }}_DecodeError error;
+    /** Explicit decode stack — avoids recursion for nested messages. */
+    struct {{ p }}_decodeFrame decode_stack[{{ P }}_DEC_MAX_DEPTH];
+    /** User-provided reader state. */
+    {{ P }}_DEC_CTX_DEF(void* io_ctx;)
+};
+
+/**
+ * @brief Create and initialize a decoder context instance.
+ *
+ * The frames of the decode stack are not initialised: {{ p }}_decode() writes the root frame and the decoder every other
+ * one before it reads it, and a fill would cost {{ P }}_DEC_MAX_DEPTH frames for every context that is created.
+ * @param io_ctx User-provided reader state when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @return Initialized decoder context with no error state.
+ */
+static inline struct {{ p }}_DecodeContext {{ p }}_DecodeContext_create({{ P }}_DEC_CTX_ONLY(void* io_ctx)) {
+    // Plain field assignment (not an aggregate initializer list) so this compiles
+    // warning-free under both a C and a C++ compiler (gcc/g++ diverge on
+    // -Wmissing-field-initializers for brace-elided initializers like `= {0}`).
+    struct {{ p }}_DecodeContext ctx;
+    ctx.eof = PB_FALSE;
+    ctx.decode_depth = 0U;
+    ctx.error = {{ P }}_DECODER_OK;
+    {{ P }}_DEC_CTX_DEF(ctx.io_ctx = io_ctx;)
+
+    return ctx;
+}
+
+/**
+ * @brief Encoded field type categories used by generated descriptors.
+ */
+{# field storage categories used by every generated {{ p }}_ItemDescriptor #}
+enum {{ p }}_ItemType {
+    /** Unsigned varint stored as pb_u32. */
+    {{ P }}_ITEM_VARINT_32,
+    /** Unsigned varint stored as pb_u16. */
+    {{ P }}_ITEM_VARINT_16,
+    /** 8-bit varint storage. */
+    {{ P }}_ITEM_VARINT_8,
+    /** Signed varint storage. */
+    {{ P }}_ITEM_VARINT_S32,
+    /** Boolean stored as pb_bool: every value but 0 is true. */
+    {{ P }}_ITEM_BOOL,
+    /** 32-bit fixed (float/signed/unsigned). */
+    {{ P }}_ITEM_FIXED_32,
+    /** Nested submessage. */
+    {{ P }}_ITEM_MESSAGE,
+    /** String or raw bytes. */
+    {{ P }}_ITEM_BYTES,
+    /** Sentinel value for bounds checking. */
+    {{ P }}_ITEM_MAX_TYPE,
+};
+
+/**
+ * @brief Wrapper for repeated-field storage.
+ */
+{# storage wrappers for repeated fields and oneof payloads; the elements follow the header, see the _data() functions #}
+struct {{ p }}_ArrayWrapper {
+    /** Number of elements in the array payload. */
+    pb_u32 len;
+};
+
+/**
+ * @brief Wrapper for oneof payload storage.
+ */
+struct {{ p }}_UnionWrapper {
+    /** Active tag inside oneof payload. */
+    pb_u32 tag;
+};
+
+/**
+ * @brief Get the elements of a repeated, bytes or string field, which follow its header.
+ * @param arr The header of the field.
+ * @return Pointer to the first byte of the elements.
+ */
+static inline pb_u8* {{ p }}_ArrayWrapper_data(struct {{ p }}_ArrayWrapper* arr) { return (pb_u8*)&arr[1]; }
+
+/**
+ * @brief Get the payload of a oneof, which follows its tag.
+ * @param wrapper The tag of the oneof.
+ * @return Pointer to the first byte of the payload.
+ */
+static inline pb_u8* {{ p }}_UnionWrapper_data(struct {{ p }}_UnionWrapper* wrapper) { return (pb_u8*)&wrapper[1]; }
+
+/**
+ * @brief Callback type for handling fields immediately on decode.
+ */
+typedef pb_bool (*{{ p }}_DecodeCallback)({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) const struct {{ p }}_ItemDescriptor* desc, pb_u16 len, void** item_data);
+
+/**
+ * @brief Descriptor metadata for one message field.
+ */
+{# per-field descriptor consumed by the shared encode/decode runtime; one instance per field, see message_src.j2 #}
+struct {{ p }}_ItemDescriptor {
+    /** Byte offset inside message structure. */
+    pb_u16 offset;
+    /** Submessage identifier. */
+    pb_msgid id;
+    /** Encoded field type (enum {{ p }}_ItemType). */
+    pb_u8 type;
+    /** True when field is repeated. */
+    pb_bool isRepeated;
+    /** True when field belongs to a oneof group. */
+    pb_bool isOneof;
+    /** True when field decoding/encoding uses callback. */
+    pb_bool hasCallback;
+    /**
+     * @brief Field-shape-specific metadata.
+     */
+    union {
+        /**
+         * @brief Fixed metadata for bytes/string/message/repeated fields.
+         */
+        struct {
+            /** Bytes capacity or message payload size. */
+            pb_u16 size;
+            /** Number of elements for repeated fields. */
+            pb_u16 cnt;
+        } fixed;
+        /** Callback invoked for custom field handling; returns true on success. */
+        {{ p }}_DecodeCallback callback;
+    } which;
+};
+
+/**
+ * @brief Descriptor metadata and callbacks for one message type.
+ */
+{# per-message table entry returned by {{ p }}_getMessageDescriptor, see bindings.j2 #}
+struct {{ p }}_MessageDescriptor {
+    /** Resolve descriptor by protobuf tag. */
+    const struct {{ p }}_ItemDescriptor* (*getItemDescriptor)(pb_u32 tag);
+    /** Reset message object to defaults. */
+    void (*clear)(void* msg);
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    /** Resolve tag name for debug printing. */
+    const char* (*getTagName)(pb_u32 tag);
+#endif
+};
+
+/**
+ * @brief Set a field with the given tag as used in the presence bitmap.
+ * @param presence Pointer to the presence bitmap.
+ * @param tag Tag of the field to set.
+ */
+static inline void {{ p }}_setUsed(pb_u8* presence, pb_tag tag) {
+    const pb_u32 byte_index = (pb_u32)tag >> 3U;
+    const pb_u32 bit_mask = 1U << ((pb_u32)tag & 0x07U);
+
+    presence[byte_index] = (pb_u8)((pb_u32)presence[byte_index] | bit_mask);
+}
+
+/**
+ * @brief Check if a field with the given tag is used in the presence bitmap.
+ * @param presence Pointer to the presence bitmap.
+ * @param tag Tag of the field to check.
+ * @return true if the field is used, false otherwise.
+ */
+static inline pb_bool {{ p }}_isUsed(const pb_u8* presence, pb_tag tag) {
+    const pb_u32 byte_index = (pb_u32)tag >> 3U;
+    const pb_u32 bit_mask = 1U << ((pb_u32)tag & 0x07U);
+
+    return (((pb_u32)presence[byte_index] & bit_mask) != 0U) ? PB_TRUE : PB_FALSE;
+}
+
+/**
+ * @brief Print byte data in hexadecimal format with indentation.
+ * @param data Pointer to the byte data.
+ * @param len Length of the byte data.
+ * @param indent Number of spaces to indent.
+ * @note When HIKARIPB_PRINT is not defined this function performs no output.
+ */
+void {{ p }}_print_bytes(const pb_u8* data, pb_u16 len, pb_u32 indent);
+
+/**
+ * @brief Print string data with indentation.
+ * @param data Pointer to the string data.
+ * @param len Length of the string data.
+ * @param indent Number of spaces to indent.
+ * @note When HIKARIPB_PRINT is not defined this function performs no output.
+ */
+void {{ p }}_print_string(const pb_u8* data, pb_u16 len, pb_u32 indent);
+
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* {{ P }}_DEFINES_H */

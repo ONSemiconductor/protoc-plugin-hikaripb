@@ -1,0 +1,12 @@
+{# one IntEnum member per protobuf enum value; values are plain ints, matching how protoc's own python runtime represents enums #}
+class {{ name }}(IntEnum):
+    {% if comment %}
+    """ {{ comment }} """
+
+    {% endif %}
+    {% for item in items %}
+    {{ item["name"] }} = {{ item["number"] }}
+    {% if item["comment"] %}
+    """ {{ item["comment"] }} """
+    {% endif %}
+    {% endfor %}

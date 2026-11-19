@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package samplepkg;
+
+// Example proto file used to exercise the protoc/c and protoc/python generators.
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_GREEN = 2;
+  COLOR_BLUE = 3;
+}
+
+message Point {
+  optional sint32 x = 1;
+  optional sint32 y = 2;
+}
+
+message Item {
+  // Embedded enum: declared inside the Item message.
+  enum ItemKind {
+    ITEM_KIND_UNSPECIFIED = 0;
+    ITEM_KIND_NORMAL = 1;
+    ITEM_KIND_SPECIAL = 2;
+  }
+
+  optional uint32 item_id = 1;
+  fixed32 checksum = 2;
+  ItemKind kind = 3;
+}
+
+// Exercises the generated tag-dispatch tables: a lone tag (tag_1 sits in its
+// own single-entry group), large gaps between tags, and a tag number near
+// the pb_u8 tag-storage ceiling (255) that also forces a multi-byte varint
+// tag on the wire.
+message SparseTags {
+  uint32 tag_1 = 1;
+  uint32 tag_25 = 25;
+  uint32 tag_75 = 75;
+  uint32 tag_150 = 150;
+  uint32 tag_200 = 200;
+}
+
+message SampleMessage {
+  // Embedded message with its own embedded enum, both declared inside SampleMessage.
+  message Metadata {
+    enum MetadataKind {
+      METADATA_KIND_UNSPECIFIED = 0;
+      METADATA_KIND_PRIMARY = 1;
+      METADATA_KIND_SECONDARY = 2;
+    }
+
+    MetadataKind kind = 1;
+    optional uint32 revision = 2;
+  }
+
+  optional sint32 opt_value = 1;
+  optional uint32 opt_uint = 2;
+  bool flag = 3;
+  Color color = 4;
+  Point location = 5;
+  bytes payload = 6;
+  oneof choice {
+    uint32 choice_u32 = 7;
+    sint32 choice_s32 = 8;
+  }
+  repeated Color tags = 9;
+  repeated Item items = 10;
+  repeated uint32 numbers = 11;
+  string label = 12;
+  Metadata metadata = 13;
+  SparseTags sparse_tags = 14;
+}

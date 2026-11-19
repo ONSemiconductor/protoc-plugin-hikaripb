@@ -1,0 +1,44 @@
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+template <bool TOP = true>
+class WrProxy : private {{ p }}::MessageProxy<TOP> {
+public:
+
+template<bool T = TOP, typename {{ p }}::enable_if<T, int>::type = 0>
+ explicit WrProxy({{ p }}::Encoder<> & encoder) : {{ p }}::MessageProxy<TOP>(encoder) {}
+
+template<bool T = TOP, typename {{ p }}::enable_if<!T, int>::type = 0>
+ WrProxy({{ p }}::Encoder<> & encoder, pb_u32 tag, bool& destructed) : {{ p }}::MessageProxy<TOP>(encoder, tag, destructed) {}
+
+ {% for item in items %}
+ {%if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+ {% if item.type == "fixed" %}
+ void set_{{ item.name }}({{ item.c_type }} value) {
+     this->addFixed({{item.tag}}, value);
+ }
+ {% elif item.type == "varint" %}
+ void set_{{ item.name }}({{ item.param }} value) {
+ {% if item.param != item.c_type %}
+     this->addVarint({{item.tag}}, static_cast<{{ item.c_type }}>(value));
+ {% else  %}
+     this->addVarint({{item.tag}}, value);
+ {% endif %}
+ }
+ {% elif item.type == "rpt_dense" %}
+ [[nodiscard]] auto rpt_{{ item.name }}() {
+     return this->template addDenseRpt<{{item.param}}, {{item.c_type}}, &{{item.encode_func}}>({{item.tag}});
+ }
+ {% elif item.type in ["rpt_sparse", "handle"] %}
+ [[nodiscard]] auto {{'add' if item.type == "handle" else 'rpt'}}_{{ item.name }}() {
+     {% if item.c_type == (p ~ "::BytesProxy")%}
+     return this->addBytes({{item.tag}});
+     {% else %}
+     return this->template addMsg<{{item.c_type}}>({{item.tag}});
+     {% endif %}
+ }
+ {% endif %}
+ {% endfor %}
+};

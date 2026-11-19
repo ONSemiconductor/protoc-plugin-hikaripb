@@ -1,0 +1,11 @@
+/*
+ * @page leaf Leaf Page
+ * The leaf: the second titled file of a directory.
+ */
+
+syntax = "proto3";
+package pages.sub;
+
+message Leaf {
+   uint32 id = 1;  // Identifier of the leaf.
+}

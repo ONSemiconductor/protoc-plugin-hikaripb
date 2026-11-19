@@ -1,0 +1,11 @@
+/*
+ * A file without a package: its message has the name of a page.
+ *
+ * Here @ref devices is the page, because the message of that name is in the package pages.
+ */
+
+syntax = "proto3";
+
+message overview {
+   uint32 id = 1;
+}

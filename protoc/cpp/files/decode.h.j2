@@ -1,0 +1,754 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_decode.h
+ * @brief   API for the protobuf decoder.
+ *
+ * @defgroup Decoder Decoder
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Streaming decoder API.
+ * @{
+ */
+
+#ifndef {{ P }}_DECODE_H
+#define {{ P }}_DECODE_H
+
+#include "{{ config.include_path }}{{ p }}_bindings.h"
+#include "{{ config.include_path }}{{ p }}_defines.h"
+
+namespace {{ p }} {
+
+// Decoder class
+{# The messages are decoded without recursion: a message inside a message is a frame on an explicit stack of
+   {{ P }}_DEC_MAX_DEPTH frames, which decode_msg() walks. The stack use of a decode is constant, whatever the nesting. #}
+template <class S>
+class Decoder {
+   public:
+    explicit Decoder(S& input) : stream(&input), top(&stack[0]) {}
+    // top points into the stack of this object: a copy would decode into the frames of the original
+    Decoder(const Decoder&) = delete;
+    Decoder& operator=(const Decoder&) = delete;
+    Decoder(Decoder&&) = delete;
+    Decoder& operator=(Decoder&&) = delete;
+    ~Decoder() = default;
+
+    /**
+     * @brief Decode a message from the stream.
+     * @param msg Pointer to the message object where the decoded data will be stored.
+     */
+    template <typename T>
+    {{ P }}_INLINE_ATTR void decode(T* msg) {
+        eof = false;
+        error = DecodeError::DECODER_OK;
+        depth = 0U;
+        top = &stack[0];
+
+        Frame& root = *top;
+        root.msg = msg;
+        root.desc = &getMessageDescriptor(T::MSGID);
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        root.id = T::MSGID;
+#endif
+        root.max_offset = NO_LIMIT;
+        root.desc->clear(root.msg);
+        decode_msg();
+    }
+
+    /**
+     * @brief Decode one item, for example from the callback of a field.
+     * @param item_data Pointer to the storage of the item.
+     * @param desc Descriptor of the item.
+     * @param len Length of the item for the types that have one (message, bytes).
+     */
+    {{ P }}_OPTIMIZE_ATTR void decode_item(pb_u8* item_data, const ItemDescriptor* desc, pb_u32 len = 0U) {
+        decode_item_inner(item_data, desc, len);
+        if (desc->type == ItemType::MESSAGE) {
+            // decode_item_inner pushed the submessage on the decode stack, a callback expects it decoded when this returns
+            decode_msg();
+        }
+    }
+
+    /**
+     * @brief Check if there was an error during decoding.
+     *
+     * A message that was decoded with an error can hold invalid fields, for example a string that the end of the input
+     * cuts off is only partly written: do not use the message.
+     * @return true if there was an error, false otherwise.
+     */
+    {{ P }}_INLINE_ATTR bool hasError() const { return error != DecodeError::DECODER_OK; }
+
+    /**
+     * @brief Get the specific error that occurred during decoding.
+     * @return The DecodeError enum value representing the error.
+     */
+    {{ P }}_INLINE_ATTR DecodeError getError() const { return error; }
+
+    /**
+     * @brief Get the underlying stream used for decoding.
+     * @return Reference to the stream object.
+     */
+    {{ P }}_INLINE_ATTR S& getStream() { return *stream; }
+
+   private:
+    // One level of the decode stack: the message that is being decoded and where it ends. The id of the message only
+    // names it in the debug output: a Decoder holds {{ P }}_DEC_MAX_DEPTH frames, and is often on the stack
+    struct Frame {
+        MessageBase* msg;                 // the message
+        const MessageDescriptor* desc;    // its descriptor
+        pb_u32 max_offset;                // the read offset at which it ends, NO_LIMIT for the root message
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        pb_msgid id;                      // its id
+#endif
+    };
+
+    static constexpr pb_u32 NO_LIMIT = 0xFFFFFFFFU;                 // the root message ends with the stream
+    static constexpr bool CALLBACKS = (({{ P }}_CALLBACK) != 0);    // the callbacks of the fields are enabled
+
+    // True when the callback of a field decodes it
+    static bool use_callback(const ItemDescriptor* desc) { return CALLBACKS && desc->hasCallback; }
+
+#if {{ P }}_CALLBACK
+    // Call the callback of a field, true when it succeeded
+    bool run_callback(const ItemDescriptor* desc, pb_u16 len, pb_u8* item_data) {
+        return desc->which.callback(*this, desc, len, field_at<void*>(item_data));
+    }
+#else
+    // Without callbacks use_callback() is false: this is never called
+    static bool run_callback(const ItemDescriptor* /*desc*/, pb_u16 /*len*/, const pb_u8* /*item_data*/) { return false; }
+#endif
+
+    // What the debug output says about an error: the text, then the name of the field and the message
+    void report_field(const char* what) const {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        const Frame& f = stack[depth];
+        {{ P }}_PRINT("{{ P }}: %s %s", what, f.desc->getTagName(curr_tag));
+        {{ P }}_PRINTLN(" in message %s", {{ p }}::getMessageName(f.id));
+#else
+        (void)what;
+#endif
+    }
+
+    void report_message(const char* what) const {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        {{ P }}_PRINTLN("{{ P }}: %s in message %s", what, {{ p }}::getMessageName(stack[depth].id));
+#else
+        (void)what;
+#endif
+    }
+
+    void report_unknown_tag(pb_u32 tag) const {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        {{ P }}_PRINT("{{ P }}: received unknown tag %" {{ P }}_U32_F, tag);
+        {{ P }}_PRINTLN(" in message %s", {{ p }}::getMessageName(stack[depth].id));
+#else
+        (void)tag;
+#endif
+    }
+
+    /**
+     * @brief Decode a 32-bit unsigned integer from the stream.
+     *
+     * The first {{ P }}_DEC_VARINT_UNROLL bytes of the varint are read by straight-line code, the others by a loop. The
+     * first two of them, which hold every key and every value below 16384, are read here, at every place where a varint
+     * is decoded; decode_uint32_rest(), which all of them call, reads the others.
+     * @return The decoded pb_u32 value.
+     */
+    {{ P }}_INLINE_ATTR pb_u32 decode_uint32() {
+#if {{ P }}_DEC_VARINT_UNROLL > 0
+        pb_u8 byte = 0U;
+
+        // fast path for single-byte varints (values 0-127)
+        if ({{ P }}_UNLIKELY(!stream->pop(&byte))) {
+            eof = true;
+            // no error here, probably just end of stream
+            return 0U;
+        }
+        pb_u32 result = static_cast<pb_u32>(byte) & 0x7FU;
+        if ({{ P }}_LIKELY((static_cast<pb_u32>(byte) & 0x80U) == 0U)) {
+            return result;
+        }
+#if {{ P }}_DEC_VARINT_UNROLL > 1
+        if (!stream->pop(&byte)) {
+            return end_of_varint();
+        }
+        result |= (static_cast<pb_u32>(byte) & 0x7FU) << 7U;
+        if ((static_cast<pb_u32>(byte) & 0x80U) == 0U) {
+            return result;
+        }
+#endif
+        return decode_uint32_rest(result);
+#else
+        return decode_uint32_rest(0U);
+#endif
+    }
+
+    // The bytes of a varint after those that decode_uint32() reads: few varints have them, so they are read by one
+    // function instead of code at every place where a varint is decoded. It is defined after the class, so it is not
+    // an inline function.
+    {{ P }}_OPTIMIZE_ATTR pb_u32 decode_uint32_rest(pb_u32 value);
+
+    // The stream ended in the middle of a varint
+    pb_u32 end_of_varint() {
+        eof = true;
+        error = DecodeError::DECODER_UNEXPECTED_EOF;
+        return 0U;
+    }
+
+    /**
+     * @brief The value of a sint32 from its varint (zigzag).
+     * @param varint The varint of the value.
+     * @return The decoded pb_s32 value.
+     */
+    static pb_s32 unzigzag(pb_u32 varint) {
+        const pb_u32 magnitude = varint >> 1U;
+        // zigzag: the lowest bit is the sign
+        const pb_u32 bits = ((varint & 1U) != 0U) ? ~magnitude : magnitude;
+
+        return static_cast<pb_s32>(bits);
+    }
+
+    /**
+     * @brief Skip a specified number of bytes in the stream.
+     * @param len Number of bytes to skip.
+     */
+    {{ P }}_OPTIMIZE_ATTR void skip_bytes(pb_u16 len) {
+        if (!stream->skip(len)) {
+            eof = true;
+            // the input ends within a field
+            if (error == DecodeError::DECODER_OK) {
+                error = DecodeError::DECODER_UNEXPECTED_EOF;
+            }
+        }
+    }
+
+    /**
+     * @brief Skip a field of a given wire type and length in the stream.
+     * @param wireType The wire type of the field to skip.
+     * @param len The length of the field to skip (used for length-delimited types).
+     */
+    {{ P }}_OPTIMIZE_ATTR void skip_type(pb_u8 wireType, pb_u16 len) {
+        if (wireType == WireType::VARINT) {
+            (void)decode_uint32();
+        } else if (wireType == WireType::FIXED32) {
+            skip_bytes(static_cast<pb_u16>(4U));
+        } else if (wireType == WireType::LENGTH_DELIMITED) {
+            skip_bytes(len);
+        } else if (wireType == WireType::FIXED64) {
+            skip_bytes(static_cast<pb_u16>(8U));
+        } else {
+            eof = true;
+            error = DecodeError::DECODER_UNKNOWN_WIRETYPE;
+            report_message("received unknown wire type");
+        }
+    }
+
+    // The rest of a packed field: a part of it has been read already, skipping its whole length would lose the next field
+    void skip_packed_rest(pb_u32 end_offset) {
+        const pb_u32 offset = stream->getOffset();
+
+        if (offset < end_offset) {
+            skip_bytes(static_cast<pb_u16>(end_offset - offset));
+        }
+    }
+
+    /**
+     * @brief Decode a byte array from the stream.
+     * @param data Pointer to the memory where the decoded bytes will be stored.
+     * @param max_len Maximum number of bytes to decode.
+     */
+    {{ P }}_OPTIMIZE_ATTR void decode_bytes(pb_u8* data, pb_u16 max_len) {
+        if (!stream->read(data, max_len)) {
+            eof = true;
+            // the input ends within a field
+            if (error == DecodeError::DECODER_OK) {
+                error = DecodeError::DECODER_UNEXPECTED_EOF;
+            }
+        }
+    }
+
+    // The length of a field is a varint of up to 32 bits, but the stream functions and the descriptors count in 16 bits
+    {{ P }}_INLINE_ATTR pb_u16 decode_length() {
+        const pb_u32 length = decode_uint32();
+        pb_u16 result = 0U;
+
+        if (length > 0xFFFFU) {
+            // a longer field fits no storage, and truncating its length would make the decoder lose the field boundaries
+            if (error == DecodeError::DECODER_OK) {
+                error = DecodeError::DECODER_BYTES_OVERFLOW;
+            }
+            eof = true;
+        } else {
+            result = static_cast<pb_u16>(length);
+        }
+        return result;
+    }
+
+    // A field whose wire type is not the one of its type in the descriptor is not a field of the message: it is skipped or
+    // an error, like an unknown field
+    {{ P }}_INLINE_ATTR static bool wire_type_matches(const ItemDescriptor* desc, pb_u8 wireType) {
+        pb_u8 expected = WireType::VARINT;
+
+        if ((desc->type == ItemType::MESSAGE) || (desc->type == ItemType::BYTES)) {
+            expected = WireType::LENGTH_DELIMITED;
+        } else if (desc->type == ItemType::FIXED_32) {
+            expected = WireType::FIXED32;
+        }
+
+        // a repeated scalar is also valid packed: all its elements in one length-delimited field
+        return (wireType == expected) ||
+               (desc->isRepeated && (wireType == WireType::LENGTH_DELIMITED) && (desc->type < ItemType::MESSAGE));
+    }
+
+    // The elements of a repeated field follow its header, size bytes each
+    static pb_u8* array_element(ArrayWrapper* arr, pb_u32 index, pb_u32 size) {
+        return &arr->data()[static_cast<pb_size>(index) * static_cast<pb_size>(size)];
+    }
+
+    // Push the submessage of an item on the decode stack: decode_msg() decodes it next
+    {{ P }}_INLINE_ATTR void push_msg(pb_u8* item_data, pb_msgid id, pb_u32 len) {
+        const pb_u8 new_depth = static_cast<pb_u8>(depth + 1U);
+
+        if (new_depth >= static_cast<pb_u8>({{ P }}_DEC_MAX_DEPTH)) {
+            error = DecodeError::DECODER_DEPTH_EXCEEDED;
+            eof = true;
+            report_message("message nesting exceeded the maximum depth");
+        } else {
+            Frame& f = stack[new_depth];
+
+            f.msg = field_at<MessageBase>(item_data);
+            f.desc = &getMessageDescriptor(id);
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+            f.id = id;
+#endif
+            f.max_offset = stream->getOffset() + len;
+            f.desc->clear(f.msg);
+            depth = new_depth;
+            top = &f;
+        }
+    }
+
+    // Store the varint of a field of a varint type (the types in front of FIXED_32) as its type
+    static void store_varint(pb_u8* item_data, pb_u8 type, pb_u32 varint) {
+        switch (type) {
+            case ItemType::VARINT_32:
+                *field_at<pb_u32>(item_data) = varint;
+                break;
+            case ItemType::VARINT_16:
+                *field_at<pb_u16>(item_data) = static_cast<pb_u16>(varint);
+                break;
+            case ItemType::VARINT_8:
+                *item_data = static_cast<pb_u8>(varint);
+                break;
+            case ItemType::VARINT_S32:
+                *field_at<pb_s32>(item_data) = unzigzag(varint);
+                break;
+            case ItemType::BOOL:
+                // the whole value counts: 0x100 or 0xFF000000 are true as well, a cast to 8 bits would make them false
+                *field_at<bool>(item_data) = (varint != 0U);
+                break;
+            default:
+                break;
+        }
+    }
+
+    {{ P }}_INLINE_ATTR void decode_item_inner(pb_u8* item_data, const ItemDescriptor* desc, pb_u32 len) {
+        // one decode of the varint for all varint types: decode_uint32() is inlined, once is less code than once per type
+        if (desc->type < ItemType::FIXED_32) {
+            store_varint(item_data, desc->type, decode_uint32());
+        } else {
+            switch (desc->type) {
+                case ItemType::FIXED_32: {
+                    pb_u8 buf[4] = {0U, 0U, 0U, 0U};
+
+                    decode_bytes(buf, static_cast<pb_u16>(4U));
+                    {# the wire format is little-endian; assembling the value from bytes works on any host byte order #}
+                    *field_at<pb_u32>(item_data) = static_cast<pb_u32>(buf[0]) |
+                                                   (static_cast<pb_u32>(buf[1]) << 8U) |
+                                                   (static_cast<pb_u32>(buf[2]) << 16U) |
+                                                   (static_cast<pb_u32>(buf[3]) << 24U);
+                    break;
+                }
+                case ItemType::MESSAGE:
+                    push_msg(item_data, desc->id, len);
+                    break;
+                case ItemType::BYTES:
+                    // a callback-driven field has no size to check, and the descriptor of it holds no size: test that first
+                    if ({{ P }}_UNLIKELY(!desc->hasCallback && (len > desc->which.fixed.size))) {
+                        error = DecodeError::DECODER_BYTES_OVERFLOW;
+                        report_field("overflow of byte array");
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+                        skip_bytes(static_cast<pb_u16>(len));
+#else
+                        eof = true;
+#endif
+                    } else {
+                        ArrayWrapper* arr = field_at<ArrayWrapper>(item_data);
+
+                        decode_bytes(arr->data(), static_cast<pb_u16>(len));
+                        arr->len = len;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+#if {{ P }}_ENABLE_REPEATED_BYTES
+    // A string or bytes element of a repeated field: each element is a {pb_u32 length; pb_u8 data[size]} struct, see message_item.j2
+    void decode_repeated_bytes(pb_u8* item_data, const ItemDescriptor* desc, pb_u16 len) {
+        ArrayWrapper* arr = field_at<ArrayWrapper>(item_data);
+        bool overflow = true;
+
+        if (arr->len >= desc->which.fixed.cnt) {
+            error = DecodeError::DECODER_REPEATED_OVERFLOW;
+            report_field("overflow of repeated field");
+        } else if (len > desc->which.fixed.size) {
+            error = DecodeError::DECODER_BYTES_OVERFLOW;
+            report_field("overflow of byte array");
+        } else {
+            // the struct is padded to the alignment of its pb_u32 member
+            constexpr pb_u32 mask = static_cast<pb_u32>(sizeof(pb_u32)) - 1U;
+            const pb_u32 stride = (static_cast<pb_u32>(sizeof(pb_u32)) + static_cast<pb_u32>(desc->which.fixed.size) + mask) & ~mask;
+            ArrayWrapper* elem = field_at<ArrayWrapper>(array_element(arr, arr->len, stride));
+
+            decode_bytes(elem->data(), len);
+            elem->len = len;
+            arr->len++;
+            overflow = false;
+        }
+
+        if (overflow) {
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+            skip_bytes(len);
+#else
+            eof = true;  // too many items in repeated field, or element too long
+#endif
+        }
+    }
+#endif
+
+    // The elements of a packed repeated scalar field: all of them in one length-delimited field
+    void decode_packed_elements(const ItemDescriptor* desc, pb_u8* item_data, pb_u16 len) {
+        const pb_u32 end_offset = stream->getOffset() + len;
+        bool stop = false;
+
+        while (!stop && (stream->getOffset() < end_offset) && !eof) {
+            if (use_callback(desc)) {
+                const pb_u32 offset_before = stream->getOffset();
+                const bool done = run_callback(desc, 0U, item_data);
+
+                // a callback that does not read its element would be called again for ever
+                if (!done || (stream->getOffset() == offset_before)) {
+                    error = DecodeError::DECODER_CALLBACK_ERROR;
+                    report_field("callback error when decoding");
+                    stop = true;
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+                    skip_packed_rest(end_offset);
+#else
+                    eof = true;  // callback error
+#endif
+                }
+            } else {
+                ArrayWrapper* arr = field_at<ArrayWrapper>(item_data);
+
+                if (arr->len < desc->which.fixed.cnt) {
+                    decode_item_inner(array_element(arr, arr->len, desc->which.fixed.size), desc, 0U);
+                    arr->len++;
+                } else {
+                    error = DecodeError::DECODER_REPEATED_OVERFLOW;
+                    report_field("overflow of repeated field");
+                    stop = true;
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+                    skip_packed_rest(end_offset);
+#else
+                    eof = true;  // too many items in repeated field
+#endif
+                }
+            }
+        }
+    }
+
+    // A repeated field: the elements of a packed scalar field, else one element per field (message, string, bytes, unpacked scalar)
+    void decode_repeated_field(const ItemDescriptor* desc, pb_u8* item_data, pb_u8 wireType, pb_u16 len) {
+        if ((wireType != WireType::LENGTH_DELIMITED) || (desc->type >= ItemType::MESSAGE)) {
+            if (use_callback(desc)) {
+                if (!run_callback(desc, len, item_data)) {
+                    error = DecodeError::DECODER_CALLBACK_ERROR;
+                    report_field("callback error when decoding");
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+                    skip_type(wireType, len);
+#else
+                    eof = true;  // callback error
+#endif
+                }
+            }
+#if {{ P }}_ENABLE_REPEATED_BYTES
+            else if (desc->type == ItemType::BYTES) {
+                decode_repeated_bytes(item_data, desc, len);
+            }
+#endif
+            else {
+                ArrayWrapper* arr = field_at<ArrayWrapper>(item_data);
+
+                if (arr->len < desc->which.fixed.cnt) {
+                    decode_item_inner(array_element(arr, arr->len, desc->which.fixed.size), desc, len);
+                    arr->len++;
+                } else {
+                    error = DecodeError::DECODER_REPEATED_OVERFLOW;
+                    report_field("overflow of repeated field");
+#if {{ P }}_CONTINUE_ON_OVERFLOW
+                    skip_type(wireType, len);
+#else
+                    eof = true;  // too many items in repeated field
+#endif
+                }
+            }
+        } else {
+            decode_packed_elements(desc, item_data, len);
+        }
+    }
+
+    // A field that is not repeated: a callback, a bytes or string, a message or a scalar
+    {{ P }}_INLINE_ATTR void decode_single_field(const ItemDescriptor* desc, pb_u8* item_data, pb_u8 wireType, pb_u16 len) {
+#if !{{ P }}_CONTINUE_ON_CALLBACK_ERROR
+        (void)wireType;
+#endif
+        if (use_callback(desc)) {
+            if ({{ P }}_UNLIKELY(!run_callback(desc, len, item_data))) {
+                error = DecodeError::DECODER_CALLBACK_ERROR;
+                report_field("callback error when decoding");
+#if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
+                skip_type(wireType, len);
+#else
+                eof = true;  // callback error
+#endif
+            }
+        } else {
+            decode_item_inner(item_data, desc, len);
+        }
+    }
+
+    // A field of the message: the oneof it is a member of, its presence bit, then the storage of its shape
+    {{ P }}_INLINE_ATTR void decode_known_field(const Frame& f, const ItemDescriptor* desc, pb_u32 tag, pb_u8 wireType, pb_u16 len) {
+        pb_u8* message_data = pointer_cast<pb_u8>(f.msg);
+        pb_u8* item_data = &message_data[desc->offset];
+        bool store = true;
+
+        // Handle oneof unions (uncommon path)
+        if ({{ P }}_UNLIKELY(desc->isOneof)) {
+            UnionWrapper* union_wrapper = field_at<UnionWrapper>(item_data);
+
+            if ({{ P }}_LIKELY(union_wrapper->tag == 0U)) {
+                union_wrapper->tag = tag;  // set the oneof tag
+                item_data = union_wrapper->data();
+            } else {
+                error = DecodeError::DECODER_ONEOF_ERROR;
+                report_field("duplicated tag");
+#if {{ P }}_CONTINUE_ON_ONEOF_ERROR
+                skip_type(wireType, len);
+#else
+                eof = true;  // multiple tags in oneof union
+#endif
+                store = false;
+            }
+        }
+
+        if (store) {
+            // the descriptor exists, so the tag is a field number of the schema and fits pb_tag
+            f.msg->setUsed(static_cast<pb_tag>(tag));
+
+            if ({{ P }}_LIKELY(!desc->isRepeated)) {
+                decode_single_field(desc, item_data, wireType, len);
+            } else {
+                decode_repeated_field(desc, item_data, wireType, len);
+            }
+        }
+    }
+
+    // One field of the message of the frame: look its descriptor up, a field that the schema does not know is skipped
+    {{ P }}_INLINE_ATTR void decode_msg_field(const Frame& f, pb_u32 tag, pb_u8 wireType, pb_u16 len) {
+        const ItemDescriptor* desc = f.desc->getItemDescriptor(tag);
+
+        if ({{ P }}_LIKELY((desc != nullptr) && wire_type_matches(desc, wireType))) {
+            decode_known_field(f, desc, tag, wireType, len);
+        } else {
+            report_unknown_tag(tag);
+#if {{ P }}_ERROR_ON_UNKNOWN_TAG
+            if (error == DecodeError::DECODER_OK) {
+                error = DecodeError::DECODER_UNKNOWN_TAG;
+            }
+#if {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR
+            skip_type(wireType, len);
+#else
+            eof = true;  // unknown tag
+#endif
+#else
+            skip_type(wireType, len);  // skip unknown tag
+#endif
+        }
+    }
+
+    // Main tag/wire type read loop: walks the decode stack instead of recursing into the nested messages. It returns when
+    // the message of the frame that is on top of the stack at the call is complete.
+    {{ P }}_OPTIMIZE_ATTR void decode_msg() {
+        const pb_u8 entry_depth = depth;
+        bool running = true;
+
+        while ({{ P }}_LIKELY(running)) {
+            // top instead of stack[depth]: the index costs a multiplication by the size of a frame for every field
+            const Frame& f = *top;
+
+            if (eof) {
+                running = false;
+            } else if (stream->getOffset() >= f.max_offset) {
+                // Finished this nesting level: pop or exit.
+                if (depth == entry_depth) {
+                    running = false;
+                } else {
+                    depth = static_cast<pb_u8>(depth - 1U);
+                    top = &stack[depth];
+                }
+            } else {
+                const pb_u32 val = decode_uint32();
+
+                if (eof) {
+                    // make sure we are not overwriting existing error
+                    if ((f.max_offset != NO_LIMIT) && (error == DecodeError::DECODER_OK)) {
+                        // eof detected in the middle of the message
+                        error = DecodeError::DECODER_UNEXPECTED_EOF;
+                        report_message("unexpected end of stream");
+                    }
+                    running = false;
+                } else {
+                    // the whole field number: one that is not a field of the schema must not wrap around to one that is
+                    const pb_u32 tag = val >> 3U;
+                    const pb_u8 wireType = static_cast<pb_u8>(val & 0x07U);
+                    pb_u16 len = 0U;
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+                    curr_tag = tag;
+#endif
+
+                    if (wireType == WireType::LENGTH_DELIMITED) {
+                        len = decode_length();
+                    }
+
+                    // a length that does not fit ends the decoding: the boundaries of the field are lost
+                    if (!eof) {
+                        decode_msg_field(f, tag, wireType, len);
+                    }
+                }
+            }
+        }
+    }
+
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    pb_u32 curr_tag = 0U;  // current tag for debug printing
+#endif
+    bool eof = false;                             // end of file flag
+    DecodeError error = DecodeError::DECODER_OK;  // decoding error status
+    pb_u8 depth = 0U;                             // index of the frame of the message that is being decoded
+    S* stream;                                    // underlying stream
+    Frame* top;                                   // the frame of the message that is being decoded, stack[depth]
+    // Not initialised on purpose: decode() and push_msg() write a frame before decode_msg() reads it, and a fill would cost
+    // {{ P }}_DEC_MAX_DEPTH frames every time a Decoder is constructed
+    Frame stack[{{ P }}_DEC_MAX_DEPTH];           // the messages that are open, the root first
+};
+
+template <class S>
+pb_u32 Decoder<S>::decode_uint32_rest(pb_u32 value) {
+    pb_u8 byte = 0U;
+    pb_u32 result = value;
+{%- for k in range(2, 4) %}
+
+#if {{ P }}_DEC_VARINT_UNROLL > {{ k }}
+    if (!stream->pop(&byte)) {
+        return end_of_varint();
+    }
+    result |= (static_cast<pb_u32>(byte) & 0x7FU) << {{ 7 * k }}U;
+    if ((static_cast<pb_u32>(byte) & 0x80U) == 0U) {
+        return result;
+    }
+#endif
+{%- endfor %}
+
+#if {{ P }}_DEC_VARINT_UNROLL > 4
+    if (!stream->pop(&byte)) {
+        return end_of_varint();
+    }
+    // the fifth byte holds the highest 4 bits of a 32-bit value
+    result |= (static_cast<pb_u32>(byte) & 0x0FU) << 28U;
+#else
+    {
+        pb_u32 index = static_cast<pb_u32>({{ P }}_DEC_VARINT_UNROLL);
+
+        while (index < 5U) {
+            if (!stream->pop(&byte)) {
+                if (index == 0U) {
+                    // no error here, probably just end of stream
+                    eof = true;
+                    return 0U;
+                }
+                return end_of_varint();
+            }
+            // the fifth byte holds the highest 4 bits of a 32-bit value
+            result |= (static_cast<pb_u32>(byte) & ((index < 4U) ? 0x7FU : 0x0FU)) << (7U * index);
+            if (((static_cast<pb_u32>(byte) & 0x80U) == 0U) && (index < 4U)) {
+                return result;
+            }
+            index++;
+        }
+    }
+#endif
+
+    // the fifth byte has room for 7 bits, a 32-bit value uses 4 of them: a value wider than 32 bits is an error, its
+    // upper bits are not dropped; the rest of a longer varint is consumed
+    if ((static_cast<pb_u32>(byte) & 0xF0U) != 0U) {
+        error = DecodeError::DECODER_VARINT_OVERFLOW;
+        bool more = ((static_cast<pb_u32>(byte) & 0x80U) != 0U);
+        while (more) {
+            if (!stream->pop(&byte)) {
+                eof = true;
+                more = false;
+            } else {
+                more = ((static_cast<pb_u32>(byte) & 0x80U) != 0U);
+            }
+        }
+    }
+
+    return result;
+}
+
+}  // namespace {{ p }}
+
+/** @} */
+
+#endif /* {{ P }}_DECODE_H */

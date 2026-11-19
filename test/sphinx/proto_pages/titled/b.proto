@@ -1,0 +1,11 @@
+/*
+ * @page beta Beta
+ * The second titled file of a directory.
+ */
+
+syntax = "proto3";
+package pages.titled;
+
+message B {
+   uint32 id = 1;
+}

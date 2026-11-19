@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package nestedpkg;
+
+// Messages and enums declared inside each other four levels deep (Outer.Middle.Inner.Leaf).
+message Outer {
+  enum OuterKind {
+    OUTER_KIND_UNSPECIFIED = 0;
+    OUTER_KIND_FIRST = 1;
+    OUTER_KIND_SECOND = 2;
+  }
+
+  message Middle {
+    enum MiddleKind {
+      MIDDLE_KIND_UNSPECIFIED = 0;
+      MIDDLE_KIND_FIRST = 1;
+      MIDDLE_KIND_SECOND = 2;
+    }
+
+    message Inner {
+      enum InnerKind {
+        INNER_KIND_UNSPECIFIED = 0;
+        INNER_KIND_FIRST = 1;
+        INNER_KIND_SECOND = 2;
+      }
+
+      message Leaf {
+        enum LeafKind {
+          LEAF_KIND_UNSPECIFIED = 0;
+          LEAF_KIND_FIRST = 1;
+          LEAF_KIND_SECOND = 2;
+        }
+
+        LeafKind kind = 1;
+        uint32 value = 2;
+      }
+
+      InnerKind kind = 1;
+      Leaf leaf = 2;
+    }
+
+    MiddleKind kind = 1;
+    Inner inner = 2;
+  }
+
+  OuterKind kind = 1;
+  Middle middle = 2;
+  // A second reference to the innermost message, written with its qualified name.
+  Middle.Inner.Leaf shortcut = 3;
+}

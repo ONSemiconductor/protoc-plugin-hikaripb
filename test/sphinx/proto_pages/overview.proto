@@ -1,0 +1,15 @@
+/*
+ * @page overview Protocol Overview
+ * The top page of the page test.
+ *
+ * The @ref tools page, the same with @ref tools "a text" and the message @ref devices, which is named like
+ * a page.
+ */
+
+syntax = "proto3";
+package pages;
+
+// A message with the name of a page.
+message devices {
+   uint32 count = 1;  // Number of devices, see the @ref tools page.
+}

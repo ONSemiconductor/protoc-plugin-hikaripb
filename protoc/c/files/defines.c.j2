@@ -1,0 +1,106 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_defines.c
+ * @brief   Defines and structures used in the protobuf library.
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Defines Defines
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Shared generated constants and helper implementations.
+ * @{
+ */
+
+#include "{{ p }}_defines.h"
+
+{# debug/print-only helpers, compiled out entirely when {{ P }}_PRINT_ENABLE is 0 #}
+void {{ p }}_print_bytes(const pb_u8* data, pb_u16 len, pb_u32 indent) {
+#if {{ P }}_PRINT_ENABLE
+    char line[((pb_u32){{ P }}_CHARS_PER_LINE * 3U) + 1U];
+    const char* hexDigits = "0123456789ABCDEF";
+    pb_u32 data_idx = 0U;
+    pb_u32 remaining = (pb_u32)len;
+
+    while (remaining != 0U) {
+        for (pb_u32 space = 0U; space < indent; space++) {
+            {{ P }}_PRINT(" ");
+        }
+
+        const pb_u32 chunk_size = (remaining > (pb_u32){{ P }}_CHARS_PER_LINE) ? (pb_u32){{ P }}_CHARS_PER_LINE : remaining;
+        for (pb_u32 i = 0U; i < chunk_size; i++) {
+            const pb_u32 value = (pb_u32)data[data_idx];
+            const pb_size pos = (pb_size)i * 3U;
+            line[pos] = hexDigits[(value >> 4U) & 0x0FU];
+            line[pos + 1U] = hexDigits[value & 0x0FU];
+            line[pos + 2U] = ' ';
+            data_idx++;
+        }
+        line[(pb_size)chunk_size * 3U] = '\0';
+        {{ P }}_PRINTLN("%s", line);
+        remaining -= chunk_size;
+    }
+#else
+    (void)data;
+    (void)len;
+    (void)indent;
+#endif
+}
+
+void {{ p }}_print_string(const pb_u8* data, pb_u16 len, pb_u32 indent) {
+#if {{ P }}_PRINT_ENABLE
+    char line[(pb_u32){{ P }}_CHARS_PER_LINE + 1U];
+    pb_u32 data_idx = 0U;
+    pb_u32 remaining = (pb_u32)len;
+
+    while (remaining != 0U) {
+        for (pb_u32 space = 0U; space < indent; space++) {
+            {{ P }}_PRINT(" ");
+        }
+
+        const pb_u32 chunk_size = (remaining > (pb_u32){{ P }}_CHARS_PER_LINE) ? (pb_u32){{ P }}_CHARS_PER_LINE : remaining;
+        for (pb_u32 i = 0U; i < chunk_size; i++) {
+            line[i] = (char)data[data_idx];
+            data_idx++;
+        }
+        line[chunk_size] = '\0';
+        {{ P }}_PRINTLN("%s", line);
+        remaining -= chunk_size;
+    }
+#else
+    (void)data;
+    (void)len;
+    (void)indent;
+#endif
+}

@@ -1,0 +1,463 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_encode.h
+ * @brief   API for the protobuf encoder which implements on-th-fly encoding for Protobuf messages.
+ *
+ * @defgroup Encoder Encoder
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Streaming encoder API.
+ * @{
+ */
+
+#ifndef {{ P }}_ENCODE_H
+#define {{ P }}_ENCODE_H
+
+#include "{{ config.include_path }}{{ p }}_defines.h"
+
+namespace {{ p }} {
+
+// Encoder class
+template <class S>
+class Encoder {
+   public:
+    explicit Encoder(S& output) : stream(&output) {}
+
+    /**
+     * @brief Encode a pb_u32 value using extended encoding to a specified length.
+     * @param val The pb_u32 value to encode.
+     * @param len The length in bytes to which the value should be encoded.
+     */
+    {{ P }}_OPTIMIZE_ATTR void encode_uint32_ext(pb_u32 val, pb_u8 len) {
+        {# the buffers of the encoder are not zero-filled: a fill is a memset for every varint on a small target, and only
+           the bytes that were written are passed to the stream #}
+        pb_u8 buffer[5];
+        // a varint has at most 5 bytes, the buffer cannot hold more
+        const pb_u8 count = (len > static_cast<pb_u8>(5U)) ? static_cast<pb_u8>(5U) : len;
+
+        {{ P }}_ASSERT(len <= 5U);
+        for (pb_u8 i = 0U; i < count; i++) {
+            pb_u32 byte_value = val & 0x7FU;
+            val >>= 7U;
+            if ((static_cast<pb_u32>(i) + 1U) < static_cast<pb_u32>(count)) {
+                byte_value |= 0x80U;
+            }
+            buffer[i] = static_cast<pb_u8>(byte_value);
+        }
+
+        stream->write(buffer, static_cast<pb_u16>(count));
+    }
+
+    /**
+     * @brief Encode the length of a field in the {{ P }}_ENC_PAD_LENGTH bytes that are reserved for it.
+     *
+     * The varint is padded with continuation bits to that size. The count is a constant, so this is shorter than
+     * encode_uint32_ext().
+     * @param length The length of the field.
+     */
+    void encode_padded_length(pb_u32 length) {
+        pb_u8 buffer[{{ P }}_ENC_PAD_LENGTH];
+        pb_u32 rest = length;
+        pb_u32 i = 0U;
+
+        while ((i + 1U) < static_cast<pb_u32>({{ P }}_ENC_PAD_LENGTH)) {
+            buffer[i] = static_cast<pb_u8>((rest & 0x7FU) | 0x80U);
+            rest >>= 7U;
+            i++;
+        }
+        buffer[i] = static_cast<pb_u8>(rest & 0x7FU);
+        stream->write(buffer, static_cast<pb_u16>({{ P }}_ENC_PAD_LENGTH));
+    }
+
+    /**
+     * @brief Map a pb_s32 value to the pb_u32 value of its zigzag encoding.
+     * @param val The pb_s32 value.
+     * @return The value with the sign in the lowest bit.
+     */
+    static pb_u32 zigzag(pb_s32 val) {
+        const pb_u32 bits = static_cast<pb_u32>(val);
+
+        return (val < 0) ? ~(bits << 1U) : (bits << 1U);
+    }
+
+    /**
+     * @brief Encode a signed pb_s32 value using variable-length encoding.
+     * @param val The pb_s32 value to encode.
+     */
+    {{ P }}_OPTIMIZE_ATTR void encode_varint32(pb_s32 val) { encode_varint32(zigzag(val)); }
+
+    /**
+     * @brief Encode an unsigned pb_u32 value using variable-length encoding.
+     * @param val The pb_u32 value to encode.
+     */
+    {{ P }}_OPTIMIZE_ATTR void encode_varint32(pb_u32 val) {
+        pb_u8 buffer[5];
+        const pb_u8 len = put_varint(buffer, val);
+
+        stream->write(buffer, static_cast<pb_u16>(len));
+    }
+
+    /**
+     * @brief Encode the key and the varint value of a field with one write to the stream.
+     * @param key The key of the field: its tag shifted left by 3, or-ed with the wire type.
+     * @param val The value of the field.
+     */
+    {{ P }}_OPTIMIZE_ATTR void encode_field_varint(pb_u32 key, pb_u32 val) {
+        pb_u8 buffer[10];
+        const pb_u8 key_len = put_key(buffer, key);
+        const pb_u8 val_len = put_varint(&buffer[key_len], val);
+
+        stream->write(buffer, static_cast<pb_u16>(static_cast<pb_u32>(key_len) + static_cast<pb_u32>(val_len)));
+    }
+
+    /**
+     * @brief Encode the key and the fixed 32-bit value of a field with one write to the stream.
+     * @param key The key of the field: its tag shifted left by 3, or-ed with the wire type.
+     * @param val The value of the field.
+     */
+    {{ P }}_OPTIMIZE_ATTR void encode_field_fixed32(pb_u32 key, pb_u32 val) {
+        pb_u8 buffer[9];
+        const pb_u8 key_len = put_key(buffer, key);
+
+        {# the wire format is little-endian; splitting the value into bytes works on any host byte order #}
+        buffer[key_len] = static_cast<pb_u8>(val & 0xFFU);
+        buffer[key_len + 1U] = static_cast<pb_u8>((val >> 8U) & 0xFFU);
+        buffer[key_len + 2U] = static_cast<pb_u8>((val >> 16U) & 0xFFU);
+        buffer[key_len + 3U] = static_cast<pb_u8>((val >> 24U) & 0xFFU);
+        stream->write(buffer, static_cast<pb_u16>(static_cast<pb_u32>(key_len) + 4U));
+    }
+
+    /**
+     * @brief Encode a signed pb_s32 value as a fixed 32-bit value.
+     * @param val The pb_s32 value to encode.
+     */
+    void encode_fixed32(pb_s32 val) { encode_fixed32(static_cast<pb_u32>(val)); }
+
+    /**
+     * @brief Encode an unsigned pb_u32 value as a fixed 32-bit value.
+     * @param val The pb_u32 value to encode.
+     */
+    void encode_fixed32(pb_u32 val) {
+        {# the wire format is little-endian; splitting the value into bytes works on any host byte order #}
+        const pb_u8 buf[4] = {
+            static_cast<pb_u8>(val & 0xFFU),
+            static_cast<pb_u8>((val >> 8U) & 0xFFU),
+            static_cast<pb_u8>((val >> 16U) & 0xFFU),
+            static_cast<pb_u8>((val >> 24U) & 0xFFU),
+        };
+        stream->write(buf, static_cast<pb_u16>(4U));
+    }
+
+#if {{ P }}_ENABLE_FLOAT
+    /**
+     * @brief Get the bits of a float value, which the wire format holds.
+     * @param val The float value.
+     * @return The bits of the value.
+     */
+    static pb_u32 float_bits(float val) {
+        union {
+            pb_u32 i;
+            float f;
+        } bytes = {0U};
+        bytes.f = val;
+        return bytes.i;
+    }
+
+    /**
+     * @brief Encode a float value as a fixed 32-bit value.
+     * @param val The float value to encode.
+     */
+    void encode_fixed32(float val) { encode_fixed32(float_bits(val)); }
+#endif
+
+    /**
+     * @brief Encode a sequence of bytes.
+     * @param data Pointer to the byte array to encode.
+     * @param len Length of the byte array.
+     */
+    void encode_bytes(const pb_u8* data, pb_u16 len) { stream->write(data, len); }
+
+    /**
+     * @brief Set the current offset in the stream.
+     * @param offset The offset to set.
+     */
+    void setOffset(pb_u32 offset) { stream->setOffset(offset); }
+
+    /**
+     * @brief Get the current offset in the stream.
+     * @return The current offset.
+     */
+    pb_u32 getOffset() const { return stream->getOffset(); }
+
+    /**
+     * @brief Get the underlying stream.
+     * @return Reference to the underlying stream.
+     */
+    S& getStream() { return *stream; }
+
+   private:
+    // The varint of val at buffer: 1 to 5 bytes, the buffer holds 5 at least; returns the count. The index is 32 bits wide,
+    // so that the loop does not narrow it; the cast to pb_u8 keeps the low 7 bits and the continuation bit
+    static pb_u8 put_varint(pb_u8* buffer, pb_u32 val) {
+        pb_u32 rest = val;
+        pb_u32 len = 0U;
+
+        while (rest > 0x7FU) {
+            buffer[len] = static_cast<pb_u8>(rest | 0x80U);
+            rest >>= 7U;
+            len++;
+        }
+        buffer[len] = static_cast<pb_u8>(rest);
+        return static_cast<pb_u8>(len + 1U);
+    }
+
+    // The key of a field number below 16 is one byte: no call for it
+    static pb_u8 put_key(pb_u8* buffer, pb_u32 key) {
+        pb_u8 len = 1U;
+
+        if (key <= 0x7FU) {
+            buffer[0] = static_cast<pb_u8>(key);
+        } else {
+            len = put_varint(buffer, key);
+        }
+        return len;
+    }
+
+    S* stream;  // underlying stream
+};
+
+template <bool>
+class MessageProxy;
+class LenDelimited {
+    template <bool>
+    friend class MessageProxy;
+
+    static constexpr pb_u32 MAX_LEN = {{ P }}_ENC_PAD_LENGTH;  // max len bytes for len delimited field
+    pb_u32 offset;                        // offset of the length field
+    bool& destructed;                       // debug: track if destructor was called
+
+   public:
+    // the length of a field is written once, when the field ends: a copy or a move would write it twice
+    LenDelimited(const LenDelimited&) = delete;
+    LenDelimited& operator=(const LenDelimited&) = delete;
+    LenDelimited(LenDelimited&&) = delete;
+    LenDelimited& operator=(LenDelimited&&) = delete;
+
+   protected:
+    Encoder<>& e;  // encoder reference
+    /**
+     * @brief Constructor for LenDelimited class.
+     * @param encoder Reference to the Encoder object.
+     * @param tag The tag associated with the length-delimited field.
+     * @param destructed_flag Reference to a boolean flag for debug purposes.
+     */
+    LenDelimited(Encoder<>& encoder, pb_u32 tag, bool& destructed_flag)
+        : offset(0U), destructed(destructed_flag), e(encoder) {
+        e.encode_varint32((tag << 3U) | static_cast<pb_u32>(WireType::LENGTH_DELIMITED));
+        offset = e.getOffset();
+        e.setOffset(offset + MAX_LEN);  // skip len bytes, will be written later
+    }
+
+    /**
+     * @brief Destructor for LenDelimited class.
+     * Encodes the length of the length-delimited field and updates the offset.
+     */
+    ~LenDelimited() {
+        const pb_u32 new_off = e.getOffset();
+        pb_u32 length = 0U;
+
+        e.setOffset(offset);  // reset offset to the beginning of the message
+        {{ P }}_ASSERT(new_off >= (offset + MAX_LEN));
+        if (new_off >= (offset + MAX_LEN)) {
+            length = new_off - offset - MAX_LEN;
+        }
+        // the reserved bytes cannot hold a longer length: it would be written truncated, i.e. wrong
+        {{ P }}_ASSERT(length <= {{ P }}_ENC_MAX_LENGTH);
+        e.encode_padded_length(length);
+        e.setOffset(new_off);
+
+        {{ P }}_DBG_DEF(destructed = true);  // mark as destructed
+    }
+};
+
+// Proxy for bytes field
+class BytesProxy : LenDelimited {
+   public:
+    BytesProxy(Encoder<>& encoder, pb_u32 tag, bool& destructed_flag) : LenDelimited(encoder, tag, destructed_flag) {}
+
+    /**
+     * @brief Write a sequence of bytes to the length-delimited field.
+     * @param data Pointer to the byte array to write.
+     * @param len Length of the byte array.
+     */
+    void write(const pb_u8* data, pb_u16 len) { e.encode_bytes(data, len); }
+};
+
+// Proxy for dense repeated field
+template <typename T, typename C, void (Encoder<>::*encode)(C)>
+class DenseRepeatedProxy : LenDelimited {
+   public:
+    DenseRepeatedProxy(Encoder<>& encoder, pb_u32 tag, bool& destructed_flag) : LenDelimited(encoder, tag, destructed_flag) {}
+
+    /**
+     * @brief Add a value to the dense repeated field.
+     * @param val The value to add.
+     */
+    void add(T val) { (e.*encode)(static_cast<C>(val)); }
+};
+
+class MessageProxyBase {
+    bool writeToken = true;  // debug: track if write operations are allowed
+
+   public:
+    // a proxy is neither copied nor moved: it is created where it is used, or in place with placement new from the result
+    // of add_<field>(), which C++17 constructs without a copy
+    MessageProxyBase(const MessageProxyBase&) = delete;
+    MessageProxyBase& operator=(const MessageProxyBase&) = delete;
+    MessageProxyBase(MessageProxyBase&&) = delete;
+    MessageProxyBase& operator=(MessageProxyBase&&) = delete;
+
+   protected:
+    Encoder<>& e;  // encoder reference
+    // top level message - has no tag & len
+    explicit MessageProxyBase(Encoder<>& encoder) : e(encoder) {}
+    ~MessageProxyBase() = default;
+
+    /**
+     * @brief Add a fixed 32-bit value to the message.
+     * @param tag The tag associated with the field.
+     * @param val The pb_u32 value to add.
+     */
+    void addFixed(pb_u32 tag, pb_u32 val) {
+        {{ P }}_ASSERT(writeToken);
+        e.encode_field_fixed32((tag << 3U) | static_cast<pb_u32>(WireType::FIXED32), val);
+    }
+
+    /**
+     * @brief Add a fixed 32-bit value to the message.
+     * @param tag The tag associated with the field.
+     * @param val The pb_s32 value to add.
+     */
+    void addFixed(pb_u32 tag, pb_s32 val) {
+        {{ P }}_ASSERT(writeToken);
+        e.encode_field_fixed32((tag << 3U) | static_cast<pb_u32>(WireType::FIXED32), static_cast<pb_u32>(val));
+    }
+
+#if {{ P }}_ENABLE_FLOAT
+    /**
+     * @brief Add a fixed 32-bit float value to the message.
+     * @param tag The tag associated with the field.
+     * @param val The float value to add.
+     */
+    void addFixed(pb_u32 tag, float val) {
+        {{ P }}_ASSERT(writeToken);
+        e.encode_field_fixed32((tag << 3U) | static_cast<pb_u32>(WireType::FIXED32), Encoder<>::float_bits(val));
+    }
+#endif
+
+    /**
+     * @brief Add a unsigned variable-length integer to the message.
+     * @param tag The tag associated with the field.
+     * @param val The pb_u32 value to add.
+     */
+    void addVarint(pb_u32 tag, pb_u32 val) {
+        {{ P }}_ASSERT(writeToken);
+        e.encode_field_varint((tag << 3U) | static_cast<pb_u32>(WireType::VARINT), val);
+    }
+
+    /**
+     * @brief Add a signed variable-length integer to the message.
+     * @param tag The tag associated with the field.
+     * @param val The pb_s32 value to add.
+     */
+    void addVarint(pb_u32 tag, pb_s32 val) {
+        {{ P }}_ASSERT(writeToken);
+        e.encode_field_varint((tag << 3U) | static_cast<pb_u32>(WireType::VARINT), Encoder<>::zigzag(val));
+    }
+
+    /**
+     * @brief Add a dense repeated field to the message.
+     * @param tag The tag associated with the field.
+     * @return A DenseRepeatedProxy object for adding values to the repeated field.
+     */
+    template <typename T, typename C, void (Encoder<>::*encode)(C)>
+    auto addDenseRpt(pb_u32 tag) {
+        {{ P }}_ASSERT(writeToken);
+        {{ P }}_DBG_DEF(writeToken = false);
+        return DenseRepeatedProxy<T, C, encode>(e, tag, writeToken);
+    }
+
+    /**
+     * @brief Add a sub-message to the message.
+     * @param tag The tag associated with the sub-message.
+     * @return A MessageProxy object for adding fields to the sub-message.
+     */
+    template <typename T>
+    auto addMsg(pb_u32 tag) {
+        {{ P }}_ASSERT(writeToken);
+        {{ P }}_DBG_DEF(writeToken = false);
+        return typename T::template WrProxy<false>(e, tag, writeToken);
+    }
+
+    /**
+     * @brief Add a bytes field to the message.
+     * @param tag The tag associated with the bytes field.
+     * @return A BytesProxy object for adding bytes to the field.
+     */
+    BytesProxy addBytes(pb_u32 tag) {
+        {{ P }}_ASSERT(writeToken);
+        {{ P }}_DBG_DEF(writeToken = false);
+        return BytesProxy(e, tag, writeToken);
+    }
+};
+
+// Proxy for top level message
+template <bool TOP = true>
+class MessageProxy : public MessageProxyBase {
+   protected:
+    explicit MessageProxy(Encoder<>& encoder) : MessageProxyBase(encoder) {}
+};
+
+// Proxy for sub message
+template <>
+class MessageProxy<false> : public MessageProxyBase {
+    LenDelimited delimiter;  // length-delimited field delimiter
+
+   protected:
+    MessageProxy(Encoder<>& encoder, pb_u32 tag, bool& destructed_flag)
+        : MessageProxyBase(encoder), delimiter(encoder, tag, destructed_flag) {}
+};
+
+}  // namespace {{ p }}
+
+/** @} */
+
+#endif /* {{ P }}_ENCODE_H */

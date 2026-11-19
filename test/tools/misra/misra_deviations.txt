@@ -1,0 +1,22 @@
+# The MISRA C:2012 rules that the generated C code deviates from: "<rule> <file pattern> <reason>".
+# The reasons are explained in docs/content/c/misra.md ("Deviations"); the findings of every other rule fail
+# make analyze. Every file name of the generated code ends with the pattern, the prefix is the one of the option prefix.
+#
+# Deviations (the code does it on purpose):
+misra-c2012-11.3  *_decode.c    DEV-1: the decoder reads and writes a field of a message at the offset of its descriptor
+misra-c2012-11.5  *_decode.c    DEV-1: the message is a void* in the generic decode entry point and in the callbacks
+misra-c2012-11.5  *.pb.c        DEV-1: clear() is a member of the descriptor table and has the generic type void(void*)
+misra-c2012-15.5  *_decode.c    DEV-2: decode_uint32 and decode_uint32_rest return as soon as the last byte of a varint is read
+misra-c2012-19.2  *_defines.h   DEV-3: the descriptor of a field holds either the size and count or the callback
+misra-c2012-19.2  *_encode.h    DEV-3: the bits of a float are read through a union
+misra-c2012-19.2  *.pb.h        DEV-3: a oneof of the schema is a union
+misra-c2012-20.5  *_defines.h   DEV-4: the print macros of the user are redefined as nothing when printing is switched off
+misra-c2012-20.10 *.pb.h        DEV-5: the macros <message>_Wr and <message>_WrTop declare the handle name_hdl of the name
+misra-c2012-20.10 *_types.h     DEV-5: PB_STATIC_ASSERT joins a name and the line number, for a compiler without _Static_assert
+#
+# Findings of the checker that are not violations:
+misra-c2012-20.7  *.pb.h        FP-1: the macro parameter is the operand of ## (an exception of the rule) and a declarator
+misra-c2012-20.7  *_types.h     FP-1: the macro parameter is the operand of ## (an exception of the rule)
+misra-c2012-11.8  *.pb.h        FP-2: the context of a const handle is a void* const, passing it removes no qualifier
+misra-c2012-11.8  *_decode.c    FP-2: a member of a const struct is a pointer that is const, the object it points to is not
+misra-c2012-2.7   *_decode.c    FP-3: the parameter len of decode_item_inner is passed on to the function in the table

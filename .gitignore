@@ -1,0 +1,5 @@
+build/
+.vscode/
+*.gcov
+__pycache__/
+*.pyc

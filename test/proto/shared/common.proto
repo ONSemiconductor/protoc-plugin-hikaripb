@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package shared;
+
+// Imported by scalars.proto from a sub-directory: exercises cross-module type references.
+message Stamp {
+  // Unit of the nanos field.
+  enum Unit {
+    UNIT_UNSPECIFIED = 0;
+    // Milliseconds.
+    UNIT_MS = 1;
+    UNIT_US = 2;
+  }
+
+  // Whole seconds.
+  uint32 seconds = 1;
+  uint32 nanos = 2;
+  Unit unit = 3;
+}

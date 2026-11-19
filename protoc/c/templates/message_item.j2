@@ -1,0 +1,108 @@
+{# Included once per struct field by message.j2; emits the field's storage
+   declaration plus the #ifndef hooks a <prefix>_config.h can override
+   (ctype/wire-type/callback type/callback enable) before the default applies. #}
+
+{# overrides for types #}
+
+#ifndef {{fullname}}_{{item.name}}_ctype
+#define {{fullname}}_{{item.name}}_ctype {{item.c_type}}
+#endif
+#ifndef {{fullname}}_{{item.name}}_{{ p }}type
+#define {{fullname}}_{{item.name}}_{{ p }}type {{item.type}}
+#endif
+#ifndef {{fullname}}_{{item.name}}_cbtype
+#define {{fullname}}_{{item.name}}_cbtype void*
+#endif
+#ifndef {{fullname}}_{{item.name}}_callback_en
+#define {{fullname}}_{{item.name}}_callback_en 0
+#endif
+
+{% if item.c_type == "float" %}
+#if !{{ P }}_ENABLE_FLOAT
+#error "{{fullname}}_{{item.name}} is a float, define {{ P }}_ENABLE_FLOAT as 1"
+#endif
+{% elif item.rpt and item.c_type == "pb_u8*" %}
+#if !{{ P }}_ENABLE_REPEATED_BYTES
+#error "{{fullname}}_{{item.name}} is a repeated string or bytes, define {{ P }}_ENABLE_REPEATED_BYTES as 1"
+#endif
+{% endif %}
+
+{% if item.rpt%} {# Repeated field #}
+{% if item.c_type == "pb_u8*"%} {# Repeated bytes: array of {length, data} structs, like the non-repeated bytes field #}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+void *{{item.name}};
+#elif defined({{fullname}}_{{item.name}}_count) && defined({{fullname}}_{{item.name}}_size)
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    /** Number of valid elements in item. */
+    pb_u32 count;
+    /** Repeated elements for this field. */
+    struct{
+        /** Number of valid bytes in data. */
+        pb_u32 length;
+        /** Storage for encoded bytes or string content. */
+        pb_u8 data [{{fullname}}_{{item.name}}_size];
+    } item [{{fullname}}_{{item.name}}_count];
+}{{item.name}};
+#else 
+#error "Neither count and size or callback defined for {{fullname}}_{{item.name}}"
+#endif
+{% else %}{# Repeated non-bytes #}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+void *{{item.name}};
+#elif defined({{fullname}}_{{item.name}}_count)
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    /** Number of valid elements in item. */
+    pb_u32 count;
+    /** Repeated elements for this field. */
+    {{fullname}}_{{item.name}}_ctype item [{{fullname}}_{{item.name}}_count];
+}{{item.name}};
+#else 
+#error "Neither count or callback defined for {{fullname}}_{{item.name}}"
+#endif
+{% endif %}
+{% else %} {# Non-repeated field #}
+{% if item.c_type == "pb_u8*"%} {# Bytes field #}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{fullname}}_{{item.name}}_cbtype {{item.name}};
+#elif defined({{fullname}}_{{item.name}}_size)
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+struct{
+    /** Number of valid bytes in data. */
+    pb_u32 length;
+    /** Storage for encoded bytes or string content. */
+    pb_u8 data [{{fullname}}_{{item.name}}_size];
+}{{item.name}};
+#else 
+#error "Neither size or callback defined for {{fullname}}_{{item.name}}"
+#endif
+{% else %} {# Non-bytes field #}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{fullname}}_{{item.name}}_cbtype {{item.name}};
+#else
+{% if item.comment %}
+{{ item.comment | doc }}
+{% endif %}
+{{fullname}}_{{item.name}}_ctype {{item.name}};
+#endif
+{% endif %}
+{% endif %}

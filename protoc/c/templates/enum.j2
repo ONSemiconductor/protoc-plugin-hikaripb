@@ -1,0 +1,44 @@
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+{# one enumerator per protobuf enum value, numbered exactly as in the .proto #}
+typedef enum {{fullname}} {
+{% for item in items %}
+{%if item["comment"] %}
+{{ item["comment"] | doc }}
+{% endif %}
+{{fullname}}_{{ item["name"] }} = {{item["number"]}}{{ "," if not loop.last }}
+{% endfor %}
+} {{fullname}};
+{# the storage of the enum in a message: the smallest type that holds its largest value, or pb_u32 without COMPRESS_ENUMS #}
+#if {{ P }}_COMPRESS_ENUMS
+#define {{fullname}}_storage {{type}}
+#define {{fullname}}_itemtype {{item_type}}
+#else
+#define {{fullname}}_storage pb_u32
+#define {{fullname}}_itemtype {{ P }}_ITEM_VARINT_32
+#endif
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+typedef {{fullname}}_storage {{fullname}}_t;
+
+{# debug/print-only helper; {{ P }}_PRINT is a user macro name, not this generator's own flag #}
+#ifdef {{ P }}_PRINT
+/** Get the name of a value of the enum {{fullname}}, for printing */
+static inline const char* {{fullname}}_to_string({{fullname}} value) {
+    const char* name;
+
+    switch (value) {
+{% set ns = namespace(seen_numbers=[]) %}
+{% for item in items %}
+{% if item["number"] not in ns.seen_numbers %}
+        case {{fullname}}_{{ item["name"] }}: name = "{{ item["name"] }}"; break;
+{% set ns.seen_numbers = ns.seen_numbers + [item["number"]] %}
+{% endif %}
+{% endfor %}
+        default: name = "unknown"; break;
+    }
+    return name;
+}
+#endif

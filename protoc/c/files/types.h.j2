@@ -1,0 +1,131 @@
+/*
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/**
+ * @file    {{ p }}_types.h
+ * @brief   Standard types and features of the protobuf library: the integer types, the boolean type and its values, the
+ *          type of a field number, the type of a message identifier, NULL, offsetof and a compile-time assertion.
+ *
+ * The library takes nothing from the C library. What it needs of it is defined here, as macros.
+ * {{ p }}_defines.h includes this file behind {{ p }}_config.h, and every macro is defined only when {{ p }}_config.h has
+ * not defined it before. The integer types are the ones that the compiler names in its predefined macros (GCC and
+ * Clang), or the C types of a 32-bit target. A target with other types defines the macros in {{ p }}_config.h, for
+ * example as the types of <stdint.h> or of a platform header that the config includes:
+ *
+ * @code
+ * #include <stdint.h>
+ * #define pb_u32 uint32_t
+ * @endcode
+ */
+
+#ifndef {{ P }}_TYPES_H
+#define {{ P }}_TYPES_H
+{% set types = [
+    ("s8", "__INT8_TYPE__", "signed char", "Signed 8-bit integer type"),
+    ("s16", "__INT16_TYPE__", "short", "Signed 16-bit integer type"),
+    ("s32", "__INT32_TYPE__", "int", "Signed 32-bit integer type"),
+    ("s64", "__INT64_TYPE__", "long long", "Signed 64-bit integer type"),
+    ("u8", "__UINT8_TYPE__", "unsigned char", "Unsigned 8-bit integer type"),
+    ("u16", "__UINT16_TYPE__", "unsigned short", "Unsigned 16-bit integer type"),
+    ("u32", "__UINT32_TYPE__", "unsigned int", "Unsigned 32-bit integer type"),
+    ("u64", "__UINT64_TYPE__", "unsigned long long", "Unsigned 64-bit integer type"),
+    ("size", "__SIZE_TYPE__", "unsigned int", "Unsigned type of a size"),
+] %}
+{% for name, builtin, plain, description in types %}
+/** {{ description }}. */
+#ifndef pb_{{ name }}
+#ifdef {{ builtin }}
+#define pb_{{ name }} {{ builtin }}
+#else
+#define pb_{{ name }} {{ plain }}
+#endif
+#endif
+{% endfor %}
+
+/** Boolean type. */
+#ifndef pb_bool
+#define pb_bool unsigned char
+#endif
+
+/** The value of a pb_bool that is true. The library does not define true and false, they belong to <stdbool.h>. */
+#ifndef PB_TRUE
+#define PB_TRUE ((pb_bool)1U)
+#endif
+
+/** The value of a pb_bool that is false. */
+#ifndef PB_FALSE
+#define PB_FALSE ((pb_bool)0U)
+#endif
+
+/** Type of a field number: the smallest of pb_u8, pb_u16 and pb_u32 that holds the largest one of the schema ({{ max_tag }}). */
+#ifndef pb_tag
+#define pb_tag {{ tag_type }}
+#endif
+
+/** Type of a message identifier: the smallest of pb_u8, pb_u16 and pb_u32 that holds the identifier of every message of the schema ({{ msg_count }} messages). */
+#ifndef pb_msgid
+#define pb_msgid {{ msgid_type }}
+#endif
+
+/** The null pointer. */
+#ifndef PB_NULL
+#ifdef __cplusplus
+#define PB_NULL nullptr
+#else
+#define PB_NULL ((void*)0)
+#endif
+#endif
+
+/**
+ * Offset of a member in a struct. Define it as offsetof of <stddef.h> in {{ p }}_config.h for a compiler that is neither
+ * GCC compatible nor MSVC and for a checker of a coding standard: the fallback below dereferences a null pointer.
+ */
+#ifndef PB_OFFSETOF
+#if defined(__GNUC__) || defined(_MSC_VER)
+#define PB_OFFSETOF(type, member) __builtin_offsetof(type, member)
+#else
+#define PB_OFFSETOF(type, member) ((pb_size)(((const pb_u8*)&(((type*)0)->member)) - ((const pb_u8*)((type*)0))))
+#endif
+#endif
+
+/** Compile-time assertion: PB_STATIC_ASSERT(condition, "message"). A failed one stops the compilation. */
+#ifndef PB_STATIC_ASSERT
+#if defined(__cplusplus)
+#define PB_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define PB_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else
+#define PB_STATIC_ASSERT_JOIN_(a, b) a##b
+#define PB_STATIC_ASSERT_JOIN(a, b) PB_STATIC_ASSERT_JOIN_(a, b)
+#define PB_STATIC_ASSERT(cond, msg) typedef char PB_STATIC_ASSERT_JOIN(pb_static_assert_, __LINE__)[(cond) ? 1 : -1]
+#endif
+#endif
+
+#endif /* {{ P }}_TYPES_H */

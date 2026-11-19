@@ -1,0 +1,98 @@
+{# every message defaults to writeonly=false unless <prefix>_config.h says otherwise #}
+{% for item in data %}
+#ifndef {{item}}_writeonly
+#define {{item}}_writeonly 0
+#endif
+{% endfor %}
+
+{% if comment %}
+{{ comment | doc }}
+{% else %}
+/** @brief Protobuf-generated message structure {{ fullname }}. */
+{% endif %}
+typedef struct {{fullname}} {
+    /** Presence bitmap for optional scalar fields in this message. */
+    pb_u8 presence[{{presence_size}}];
+
+{# the members in the order of their alignment, smallest first (see common.ProtoMessage.get_layout), so that the struct
+   has as little padding as possible; a oneof (its tag and its union) is one unit #}
+{% for unit in layout %}
+{% if unit.group != "" %}
+    /** Active oneof selector tag for {{unit.group}}. */
+    pb_u32 {{unit.group}}_tag;
+    /** Oneof payload for {{unit.group}}; selected member is identified by {{unit.group}}_tag. */
+    union {
+{% endif %}
+{# emit one struct field per member of this unit via message_item.j2 #}
+{% for item in unit.fields %}
+    {%+ include "message_item.j2" %}
+{% endfor %}
+{% if unit.group != "" %}
+    }{{unit.group}};
+{% endif %}
+{% endfor %} 
+} {{fullname}};
+
+{# the descriptors hold the offsets and the sizes of the fields in 16 bits #}
+PB_STATIC_ASSERT(sizeof({{fullname}}) <= 0xFFFFU, "{{fullname}} is larger than 65535 bytes, the descriptors count in 16 bits");
+
+{# one tag constant per field, used below and by getItemDescriptor() in message_src.j2 #}
+{% for item in descriptors %}
+#define {{fullname}}_{{item.name}}_TAG {{item.tag}}U
+{% endfor %}
+
+{# decode-side API (decode/has_*/clear/print/...) is only emitted for messages that can be received #}
+#if !{{fullname}}_writeonly
+
+/** Decode the message */
+static inline void {{fullname}}_decode({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) {{fullname}}* destination){
+    {{ p }}_decode({{ P }}_DEC_CTX_DEF(decoder_ctx,) destination, (pb_msgid){{fullname}}_ID);
+}
+
+{# one _has_<field>() accessor per plain optional field #}
+{% for o in optionals %}
+
+{% if o.group == "" %} {# If the optional field is not part of a oneof group, check the presence array #}
+/** Check if the field {{o.name}} is set */
+static inline pb_bool {{fullname}}_has_{{o.name}}(const {{fullname}}* msg) { return {{ p }}_isUsed(msg->presence, (pb_tag){{o.tag}}U); }
+{% else %} {# If the optional field is part of a oneof group, check the tag of the group #}
+/** Check if the oneof {{o.group}} holds the member {{o.name}} */
+static inline pb_bool {{fullname}}_has_{{o.name}}(const {{fullname}}* msg) { return (msg->{{o.group}}_tag == {{fullname}}_{{o.name}}_TAG) ? PB_TRUE : PB_FALSE; }
+{% endif %}
+{% endfor %} 
+
+{# one _has_<oneof>() accessor per oneof group, true once any member has been decoded #}
+{% for k,v in members.items() %}
+{% if k != "" %}
+/** Check if any member of the oneof {{k}} is set */
+static inline pb_bool {{fullname}}_has_{{k}}(const {{fullname}}* msg) { return (msg->{{k}}_tag != 0U) ? PB_TRUE : PB_FALSE; }
+{% endif %}
+{% endfor %} 
+
+/** Clear the message */
+void {{fullname}}_clear (void * data);
+
+/** Get tag name in readable format */
+const char* {{fullname}}_getTagName (pb_u32 tag);
+
+/** Get the item descriptor for a given tag */
+const struct {{ p }}_ItemDescriptor* {{fullname}}_getItemDescriptor(pb_u32 tag);
+
+/** Print the message */
+void {{fullname}}_print(const {{fullname}}* msg);
+
+/** Print the message with indentation */
+void {{fullname}}_print_int(const {{fullname}}* msg, pb_u32 indent);
+
+{# the callbacks are implemented by the application: declared here so that its source file includes the declaration it defines #}
+{% for item in descriptors %}
+#if {{fullname}}_{{item.name}}_callback_en && {{ P }}_CALLBACK
+/** Decode the field {{item.name}} (implemented by the application, enabled with {{fullname}}_{{item.name}}_callback_en) */
+pb_bool {{fullname}}_{{item.name}}_callback({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) const struct {{ p }}_ItemDescriptor* desc, pb_u16 len, void** item_data);
+#endif
+{% endfor %}
+
+#endif
+
+{# proxy = pre-rendered proxy_message.j2 output (encode-side WrHandle API), passed in by c/parser.py #}
+{{proxy}}

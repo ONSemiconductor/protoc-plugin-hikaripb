@@ -1,0 +1,34 @@
+/* Device messages, built on the @ref Item of the base schema. */
+
+syntax = "proto3";
+
+// Package of the device messages: its comment belongs to the file as well.
+package docs.base.device;
+
+import "base.proto";
+
+// Configuration of a device.
+message Config {
+   // Handle of the device, an @ref Item is not needed. Unknown: @ref nosuchsymbol.
+   uint32 handle = 1;
+   repeated docs.base.Item items = 2;  // The items, see @ref Result.
+   map<string, uint32> counters = 3;   // Counters by name.
+   oneof mode {
+      // Fast mode, with @c fast and @b bold.
+      bool fast = 4;
+      uint32 level = 5;  // Level of the mode.
+   }
+   Nested nested = 6;
+   reserved 7, 9 to 11;
+   // Name of a removed field.
+   reserved "old";
+   /*
+    * Figure with a caption.
+    * @image html figures/diagram.png "Diagram caption" width=50%
+    */
+   uint32 shown = 8;
+
+   message Nested {
+      uint32 value = 1;  // The value.
+   }
+}

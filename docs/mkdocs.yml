@@ -1,0 +1,55 @@
+site_name: HikariPb
+site_description: A light implementation of Protocol Buffers. Encoders and decoders in C, C++ and Python, and the documentation of a protocol, generated from .proto files.
+# Set by the Docs workflow (.github/workflows/docs.yml), empty for a local build.
+site_url: !ENV [SITE_URL, ""]
+repo_url: !ENV [REPO_URL, ""]
+# No "Edit on GitHub" link: an empty edit_uri turns off the default one.
+edit_uri: ""
+# The pages are in a folder of their own, because MkDocs does not allow its config file inside the pages folder.
+docs_dir: content
+site_dir: ../build/site
+# Pages are name.html, not name/index.html, so the built site also works when opened from disk.
+use_directory_urls: false
+
+theme:
+  name: readthedocs
+  custom_dir: overrides
+  highlightjs: false
+  prev_next_buttons_location: none
+
+extra_css:
+  - stylesheets/pygments.css
+  - stylesheets/colors.css
+  - stylesheets/layout.css
+
+markdown_extensions:
+  - codehilite:
+      css_class: highlight
+      guess_lang: false
+  - toc:
+      permalink: true
+
+validation:
+  links:
+    anchors: warn
+
+nav:
+  - Home: index.md
+  - Generator options: options.md
+  - Encoding and decoding: how-it-works.md
+  - C generator:
+      - Overview: c/overview.md
+      - Configuration options: c/configuration.md
+      - Callbacks: c/callbacks.md
+      - Coding standards and safety: c/misra.md
+  - C++ generator:
+      - Overview: cpp/overview.md
+      - Configuration options: cpp/configuration.md
+      - Callbacks: cpp/callbacks.md
+      - Coding standards and safety: cpp/misra.md
+  - Python generator:
+      - Overview: python/overview.md
+      - Configuration options: python/configuration.md
+  - Documentation generator:
+      - Overview: documentation/overview.md
+      - Configuration options: documentation/configuration.md

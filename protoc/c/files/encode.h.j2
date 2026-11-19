@@ -1,0 +1,328 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_encode.h
+ * @brief   API for the protobuf encoder which implements on-th-fly encoding for Protobuf messages.
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Encoder Encoder
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Encoder API generated from protobuf definitions.
+ * @{
+ */
+
+#ifndef {{ P }}_ENCODE_H
+#define {{ P }}_ENCODE_H
+
+#include "{{ config.include_path }}{{ p }}_defines.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+{# varint/fixed encode primitives; shared by every generated *_set_*/*_add_* setter #}
+/**
+ * @brief Encode a pb_u32 value using extended encoding (fixed length).
+ * @param ctx Writer context.
+ * @param val The pb_u32 value to encode.
+ * @param len The length in bytes to use for encoding.
+ */
+void {{ p }}_encode_uint32_extend({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 val, pb_u8 len);
+
+/**
+ * @brief Encode a pb_s32 value using variable-length encoding.
+ * @param ctx Writer context.
+ * @param val The pb_s32 value to encode.
+ */
+void {{ p }}_encode_varint_s32({{ P }}_ENC_CTX_DEF(void* ctx,) pb_s32 val);
+
+/**
+ * @brief Encode a pb_u32 value using variable-length encoding.
+ * @param ctx Writer context.
+ * @param val The pb_u32 value to encode.
+ */
+void {{ p }}_encode_varint_u32({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 val);
+
+/**
+ * @brief Encode the key and the varint value of a field with one call of the write function.
+ * @param ctx Writer context.
+ * @param key The key of the field: its tag shifted left by 3, or-ed with the wire type.
+ * @param val The value of the field.
+ */
+void {{ p }}_encode_field_varint({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 key, pb_u32 val);
+
+/**
+ * @brief Encode the key and the fixed 32-bit value of a field with one call of the write function.
+ * @param ctx Writer context.
+ * @param key The key of the field: its tag shifted left by 3, or-ed with the wire type.
+ * @param val The value of the field.
+ */
+void {{ p }}_encode_field_fixed32({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 key, pb_u32 val);
+
+/**
+ * @brief Map a pb_s32 value to the pb_u32 value of its zigzag encoding.
+ * @param val The pb_s32 value.
+ * @return The value with the sign in the lowest bit.
+ */
+static inline pb_u32 {{ p }}_zigzag(pb_s32 val) {
+    const pb_u32 bits = (pb_u32)val;
+
+    return (val < 0) ? ~(bits << 1U) : (bits << 1U);
+}
+
+/**
+ * @brief Encode a sequence of bytes.
+ * @param ctx Writer context.
+ * @param data Pointer to the byte array to encode.
+ * @param len The length of the byte array.
+ */
+static inline void {{ p }}_encode_bytes({{ P }}_ENC_CTX_DEF(void* ctx,) const pb_u8 *data, pb_u16 len) {
+    {{ p }}_write({{ P }}_ENC_CTX_DEF(ctx,) data, len);
+}
+
+/**
+ * @brief Encode a fixed-length pb_u32 value.
+ * @param ctx Writer context.
+ * @param val The pb_u32 value to encode.
+ */
+static inline void {{ p }}_encode_fixed_u32({{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 val) {
+    {# the wire format is little-endian; splitting the value into bytes works on any host byte order #}
+    const pb_u8 buf[sizeof(pb_u32)] = {
+        (pb_u8)(val & 0xFFU),
+        (pb_u8)((val >> 8U) & 0xFFU),
+        (pb_u8)((val >> 16U) & 0xFFU),
+        (pb_u8)((val >> 24U) & 0xFFU),
+    };
+
+    {{ p }}_encode_bytes({{ P }}_ENC_CTX_DEF(ctx,) buf, (pb_u16)sizeof(pb_u32));
+}
+
+/**
+ * @brief Encode a fixed-length pb_s32 value.
+ * @param ctx Writer context.
+ * @param val The pb_s32 value to encode.
+ */
+static inline void {{ p }}_encode_fixed_s32({{ P }}_ENC_CTX_DEF(void* ctx,) pb_s32 val) {
+    {{ p }}_encode_fixed_u32({{ P }}_ENC_CTX_DEF(ctx,) (pb_u32)val);
+}
+
+#if {{ P }}_ENABLE_FLOAT
+/**
+ * @brief Get the bits of a float value, which the wire format holds.
+ * @param val The float value.
+ * @return The bits of the value.
+ */
+static inline pb_u32 {{ p }}_float_bits(float val) {
+    union {
+        pb_u32 i;
+        float f;
+    } bytes;
+    bytes.f = val;
+
+    return bytes.i;
+}
+
+/**
+ * @brief Encode a fixed-length float value.
+ * @param ctx Writer context.
+ * @param val The float value to encode.
+ */
+static inline void {{ p }}_encode_fixed_float({{ P }}_ENC_CTX_DEF(void* ctx,) float val) {
+    {{ p }}_encode_fixed_u32({{ P }}_ENC_CTX_DEF(ctx,) {{ p }}_float_bits(val));
+}
+#endif
+
+/**
+ * @brief Runtime state used while encoding a length-delimited field.
+ */
+{# length-delimited fields (messages/bytes) reserve pad bytes up front, then patch in the real length on destroy #}
+struct {{ p }}_LenDelimited {
+    /** Offset where deferred length bytes will be written. */
+    pb_u32 offset;
+    /** Debug flag used to verify proper destruction path. */
+    {{ P }}_DBG_DEF(pb_bool *destructed;)
+};
+
+/**
+ * @brief Initialize a length-delimited field in place.
+ * @param ldl Pointer to the {{ p }}_LenDelimited structure to initialize.
+ * @param ctx Writer context.
+ * @param tag The field tag.
+ * @param destructed (Debug only) Pointer to a boolean flag to indicate destruction status.
+ */
+static inline void {{ p }}_LenDelimited_init(struct {{ p }}_LenDelimited *ldl, {{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 tag {{ P }}_DBG_DEF(, pb_bool *destructed)) {
+    {{ p }}_encode_varint_u32({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_LENGTH_DELIMITED));
+    ldl->offset = {{ p }}_getWriteOffset({{ P }}_ENC_CTX_DEF(ctx));
+    {{ P }}_DBG_DEF(ldl->destructed = destructed;)
+    {{ p }}_setWriteOffset({{ P }}_ENC_CTX_DEF(ctx,) ldl->offset + (pb_u32){{ P }}_ENC_PAD_LENGTH);  // skip len bytes, will be written later
+}
+
+/**
+ * @brief Destroy a length-delimited field, writing the length bytes.
+ * @param ctx Writer context.
+ * @param len_delimited Pointer to the {{ p }}_LenDelimited structure to destroy.
+ */
+void {{ p }}_LenDelimited_destroy({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_LenDelimited *len_delimited);
+
+/**
+ * @brief Runtime handle used to build one encoded message or submessage.
+ */
+{# backs every generated *_WrHandle (see proxy_message.j2); one per open message/submessage #}
+struct {{ p }}_EncodeHandle {
+    /** Debug guard that tracks handle write ownership. */
+    {{ P }}_DBG_DEF(pb_bool writeToken;)
+    /** Length-delimited field delimiter metadata. */
+    struct {{ p }}_LenDelimited delimiter;
+};
+
+/**
+ * @brief Initialize a top-level message encoding handle in place.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure to initialize.
+ */
+static inline void {{ p }}_MessageHandle_init(struct {{ p }}_EncodeHandle *handle) {
+    {{ P }}_DBG_DEF(handle->writeToken = PB_TRUE;)
+    (void)handle;
+}
+
+/**
+ * @brief Initialize a submessage encoding handle in place.
+ * @param subhandle Pointer to the {{ p }}_EncodeHandle structure to initialize.
+ * @param ctx Writer context.
+ * @param tag The field tag for the field.
+ * @param destructed (Debug only) Pointer to a boolean flag to indicate destruction status.
+ */
+static inline void {{ p }}_Handle_init(struct {{ p }}_EncodeHandle *subhandle,
+                                        {{ P }}_ENC_CTX_DEF(void* ctx,)
+                                        pb_u32 tag {{ P }}_DBG_DEF(, pb_bool *destructed)) {
+    {{ P }}_DBG_DEF(subhandle->writeToken = PB_TRUE;)
+    {{ p }}_LenDelimited_init(&subhandle->delimiter, {{ P }}_ENC_CTX_DEF(ctx,) tag {{ P }}_DBG_DEF(, destructed));
+}
+
+/**
+ * @brief Destroy a message encoding handle.
+ * @param ctx Writer context.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure to destroy.
+ */
+static inline void {{ p }}_Handle_destroy({{ P }}_ENC_CTX_DEF(void* ctx,) struct {{ p }}_EncodeHandle *handle) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    {{ p }}_LenDelimited_destroy({{ P }}_ENC_CTX_DEF(ctx,) &handle->delimiter);
+}
+
+/**
+ * @brief Add a fixed-length pb_u32 field to the encoding handle.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure.
+ * @param tag The field tag.
+ * @param val The pb_u32 value to add.
+ */
+{# tag+value writers called from proxy_message.j2's generated set_*() functions: one write per field #}
+static inline void {{ p }}_EncodeHandle_addFixed_u32({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_EncodeHandle *handle, pb_u32 tag,
+                                                       pb_u32 val) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_field_fixed32({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_FIXED32), val);
+}
+
+/**
+ * @brief Add a fixed-length pb_s32 field to the encoding handle.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure.
+ * @param tag The field tag.
+ * @param val The pb_s32 value to add.
+ */
+static inline void {{ p }}_EncodeHandle_addFixed_s32({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_EncodeHandle *handle, pb_u32 tag,
+                                                      pb_s32 val) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_field_fixed32({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_FIXED32), (pb_u32)val);
+}
+
+#if {{ P }}_ENABLE_FLOAT
+/**
+ * @brief Add a fixed-length float field to the encoding handle.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure.
+ * @param tag The field tag.
+ * @param val The float value to add.
+ */
+static inline void {{ p }}_EncodeHandle_addFixed_float({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_EncodeHandle *handle, pb_u32 tag, float val) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_field_fixed32({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_FIXED32), {{ p }}_float_bits(val));
+}
+#endif
+
+/**
+ * @brief Add a variable-length pb_u32 field to the encoding handle.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure.
+ * @param tag The field tag.
+ * @param val The pb_u32 value to add.
+ */
+static inline void {{ p }}_EncodeHandle_addVarint_u32({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_EncodeHandle *handle, pb_u32 tag,
+                                                        pb_u32 val) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_field_varint({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_VARINT), val);
+}
+
+/**
+ * @brief Add a variable-length pb_s32 field to the encoding handle.
+ * @param handle Pointer to the {{ p }}_EncodeHandle structure.
+ * @param tag The field tag.
+ * @param val The pb_s32 value to add.
+ */
+static inline void {{ p }}_EncodeHandle_addVarint_s32({{ P }}_ENC_CTX_DEF(void* ctx,) const struct {{ p }}_EncodeHandle *handle, pb_u32 tag,
+                                                       pb_s32 val) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    (void)handle;
+    {{ p }}_encode_field_varint({{ P }}_ENC_CTX_DEF(ctx,) (tag << 3U) | ((pb_u8){{ P }}_WIRE_VARINT), {{ p }}_zigzag(val));
+}
+
+/**
+ * @brief Initialize a submessage encoding handle in place from an existing handle.
+ * @param sub Pointer to the {{ p }}_EncodeHandle structure to initialize as submessage.
+ * @param handle Pointer to the parent {{ p }}_EncodeHandle structure.
+ * @param ctx Writer context.
+ * @param tag The field tag for the submessage.
+ */
+static inline void {{ p }}_EncodeHandle_add(struct {{ p }}_EncodeHandle *sub, struct {{ p }}_EncodeHandle *handle, {{ P }}_ENC_CTX_DEF(void* ctx,) pb_u32 tag) {
+    {{ P }}_DBG_DEF({{ P }}_ASSERT(handle->writeToken != PB_FALSE);)
+    {{ P }}_DBG_DEF(handle->writeToken = PB_FALSE;)
+    (void)handle;
+    {{ p }}_Handle_init(sub, {{ P }}_ENC_CTX_DEF(ctx,) tag {{ P }}_DBG_DEF(, &handle->writeToken));
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* {{ P }}_ENCODE_H */

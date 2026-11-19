@@ -1,0 +1,11 @@
+/*
+ * @page devices Devices
+ * The devices: the first titled file of a directory.
+ */
+
+syntax = "proto3";
+package pages.sub;
+
+message Device {
+   uint32 handle = 1;  // Handle of the device.
+}

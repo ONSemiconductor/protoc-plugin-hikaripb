@@ -1,0 +1,38 @@
+{% set prefix = fullname | replace('::', '_') %}
+{# the storage of the enum: the smallest type that holds its largest value, or pb_u32 without COMPRESS_ENUMS #}
+#if {{ P }}_COMPRESS_ENUMS
+#define {{prefix}}_storage {{type}}
+#define {{prefix}}_itemtype {{item_type}}
+#else
+#define {{prefix}}_storage pb_u32
+#define {{prefix}}_itemtype {{ p }}::ItemType::VARINT_32
+#endif
+{%if comment %}
+{{ comment | doc }}
+{% endif %}
+enum {{name}} : {{prefix}}_storage {
+{% for item in items %}
+{%if item["comment"] %}
+{{ item["comment"] | doc }}
+{% endif %}
+{{ item["name"] }} = {{item["number"]}}{{ "," if not loop.last }}
+{% endfor %} 
+};
+
+#if {{ P }}_PRINT_ENABLE
+static inline const char* to_string({{name}} value) {
+    const char* text;
+
+    switch (value) {
+{% set ns = namespace(seen_numbers=[]) %}
+{% for item in items %}
+{% if item["number"] not in ns.seen_numbers %}
+        case {{ item["name"] }}: text = "{{ item["name"] }}"; break;
+{% set ns.seen_numbers = ns.seen_numbers + [item["number"]] %}
+{% endif %}
+{% endfor %}
+        default: text = "unknown"; break;
+    }
+    return text;
+}
+#endif

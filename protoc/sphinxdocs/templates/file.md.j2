@@ -1,0 +1,28 @@
+{% if label %}
+({{ label }})=
+
+{% endif %}
+# {{ title }}
+
+{% if file %}
+**File:** `{{ file }}`
+
+{% endif %}
+{% if package %}
+**Package:** `{{ package }}`
+
+{% endif %}
+{% if header %}
+{{ header }}
+
+{% endif %}
+{% if inline_protocol %}
+{{ inline_protocol }}
+{% else %}
+```{toctree}
+:hidden:
+:titlesonly:
+
+{{ protocol }}
+```
+{% endif %}

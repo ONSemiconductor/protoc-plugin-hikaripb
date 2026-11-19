@@ -1,0 +1,16 @@
+/* More device messages: the second file of the directory, so that the directory is listed on its own page. */
+
+syntax = "proto3";
+package docs.base.extra;
+
+// Mode of a device.
+enum Mode {
+   modeIdle = 0;  // Nothing to do, see @ref Status.
+   modeBusy = 1;  // Working.
+}
+
+// Status of a device.
+message Status {
+   Mode mode = 1;  // Current mode.
+   string text = 2;  // Free text.
+}

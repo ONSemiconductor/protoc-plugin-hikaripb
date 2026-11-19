@@ -1,0 +1,101 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_decode.h
+ * @brief   API for the protobuf decoder.
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Decoder Decoder
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Decoder API generated from protobuf definitions.
+ * @{
+ */
+
+#ifndef {{ P }}_DECODE_H
+#define {{ P }}_DECODE_H
+
+#include "{{ config.include_path }}{{ p }}_bindings.h"
+#include "{{ config.include_path }}{{ p }}_defines.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+{# per-field dispatch used by decode.c.j2's tb_* callbacks and by callback-enabled fields #}
+/**
+ * @brief Decodes an item based on its descriptor.
+ * @param decoder_ctx Decoder context that owns error state and reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @param item_data Pointer to the raw item data.
+ * @param desc Pointer to the item descriptor.
+ * @param len Length of the item data.
+ */
+void {{ p }}_decode_item({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                         pb_u8* item_data,
+                         const struct {{ p }}_ItemDescriptor* desc,
+                         pb_u32 len);
+
+
+/**
+ * @brief Decodes a message based on its ID.
+ * @param decoder_ctx Decoder context that owns error state and reader context when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @param msg Pointer to the message structure to populate.
+ * @param msgID ID of the message to decode.
+ */
+{# entry point called by every generated message's inline _decode() wrapper, see message_src.j2 #}
+void {{ p }}_decode({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,) void* msg, pb_msgid msgID);
+
+/**
+ * @brief Checks if there was an error during decoding.
+ *
+ * A message that was decoded with an error can hold invalid fields, for example a string that the end of the input cuts
+ * off is only partly written: do not use the message.
+ * @param decoder_ctx Decoder context to query when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @return true if there was an error, false otherwise.
+ */
+{# call after {{ p }}_decode() to check whether the message was fully consumed without errors #}
+pb_bool {{ p }}_hasError({{ P }}_DEC_CTX_ONLY(const struct {{ p }}_DecodeContext* decoder_ctx));
+
+/**
+ * @brief Retrieves the decoding error.
+ * @param decoder_ctx Decoder context to query when {{ P }}_ENABLE_MULTI_DEC is enabled.
+ * @return The decoding error as an {{ p }}_DecodeError enum value.
+ */
+enum {{ p }}_DecodeError {{ p }}_getError({{ P }}_DEC_CTX_ONLY(const struct {{ p }}_DecodeContext* decoder_ctx));
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* {{ P }}_DECODE_H */

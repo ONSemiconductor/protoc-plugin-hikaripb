@@ -1,0 +1,11 @@
+/*
+ * A file without a page: it is listed with its path.
+ */
+
+syntax = "proto3";
+package pages;
+
+message Plain {
+   uint32 id = 1;     // Identifier, see @ref overview.
+   uint32 other = 2;  // Another one, see @ref alpha.
+}

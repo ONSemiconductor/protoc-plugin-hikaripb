@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+// Every scalar type the generators support, repeated variants of each, a oneof holding a message
+// and a string, and a type imported from a sub-directory. Node can only be represented by the
+// python generator, the c and cpp tests leave it out (option ignore).
+package scalarpkg;
+
+import "shared/common.proto";
+
+// Verbosity of a scalar.
+enum Level {
+  // The lowest level.
+  LEVEL_ZERO = 0;
+  LEVEL_ONE = 1;  // The middle level.
+  LEVEL_TWO = 2;
+}
+
+// Doc comment with "quotes", a \backslash and """triple quotes""" that must survive as a docstring.
+message Scalars {
+  // Plain counter without presence.
+  uint32 u32 = 1;
+  sint32 s32 = 2;
+  fixed32 f32 = 3;
+  sfixed32 sf32 = 4;
+  float flt = 5;
+  bool flag = 6;
+  Level level = 7;
+  // Text that is only written when it was assigned.
+  string text = 8;
+  bytes blob = 9;
+  // Optional counter, unset until assigned.
+  optional uint32 opt_u32 = 10;
+  optional string opt_text = 11;
+  optional Level opt_level = 12;
+  optional float opt_flt = 13;
+  optional bool opt_flag = 14;
+  // python keywords and method names of the message base class get a trailing underscore
+  uint32 from = 20;
+  string serialize = 21;
+  string clear = 22;
+}
+
+message Repeats {
+  repeated uint32 u32 = 1;
+  repeated sint32 s32 = 2;
+  repeated fixed32 f32 = 3;
+  repeated sfixed32 sf32 = 4;
+  repeated float flt = 5;
+  repeated bool flag = 6;
+  repeated Level level = 7;
+  // Packed list of embedded messages.
+  repeated shared.Stamp stamps = 8;
+}
+
+// Repeated string and bytes fields, one length-delimited element per entry.
+message TextLists {
+  repeated string text = 1;
+  repeated bytes blob = 2;
+}
+
+message Choice {
+  oneof value {
+    uint32 number = 1;
+    string text = 2;
+    shared.Stamp stamp = 3;
+    Level level = 4;
+  }
+  optional shared.Stamp extra = 5;
+  // Embedded message without explicit presence.
+  shared.Stamp when = 6;
+}
+
+// An enum whose largest value does not fit 8 bits: the C and C++ structs store it in 16 bits.
+enum Width {
+  WIDTH_ZERO = 0;
+  WIDTH_MAX = 300;
+}
+
+message Wide {
+  Width width = 1;
+  optional Width opt_width = 2;
+}
+
+// Self-referencing message: a fixed-size C/C++ struct cannot contain itself.
+message Node {
+  uint32 value = 1;
+  Node next = 2;
+}

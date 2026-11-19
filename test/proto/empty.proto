@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package emptypkg;
+
+// A message without fields, like the request of a command that needs no parameter.
+message Ping {
+}
+
+// Embeds the empty message as a plain field and as a member of a oneof.
+message Pong {
+  uint32 seq = 1;
+  Ping ping = 2;
+  oneof reply {
+    Ping ack = 3;
+    uint32 code = 4;
+  }
+}

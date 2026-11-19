@@ -1,0 +1,88 @@
+# Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted
+# provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of
+#    conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+#    conditions and the following disclaimer in the documentation and/or other materials provided
+#    with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+#    endorse or promote products derived from this software without specific prior written
+#    permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+# OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# C declarations for {{ p }}_codec.py. Only used when the module is compiled with Cython; plain Python ignores this file.
+
+cimport cython
+
+cdef int K_UINT32
+cdef int K_SINT32
+cdef int K_BOOL
+cdef int K_ENUM
+cdef int K_FIXED32
+cdef int K_SFIXED32
+cdef int K_FLOAT
+cdef int K_BYTES
+cdef int K_STRING
+cdef int K_MESSAGE
+cdef int L_SINGLE
+cdef int L_OPTIONAL
+cdef int L_REPEATED
+
+cdef int _put_varint(bytearray out, unsigned long long value) except -1
+
+cdef int _is_default(int kind, object value) except -1
+
+cdef bytes _to_bytes(object value, int kind)
+
+@cython.locals(number=cython.longlong)
+cdef int _put_scalar(bytearray out, int kind, object value) except -1
+
+@cython.locals(body=bytearray, data=bytes)
+cdef int _encode_repeated(bytearray out, object values, int kind, bytes tag) except -1
+
+@cython.locals(number=cython.uint, attr=str, kind=cython.int, label=cython.int, name=str, tag=bytes,
+               body=bytearray, data=bytes)
+cdef int _encode_message(bytearray out, object msg) except -1
+
+@cython.locals(out=bytearray)
+cpdef bytes encode(object msg)
+
+@cython.locals(result=cython.ulonglong, shift=cython.int, byte=cython.ulonglong)
+cdef (unsigned long long, Py_ssize_t) _get_varint(bytes buf, Py_ssize_t pos, Py_ssize_t end) except *
+
+@cython.locals(length=cython.ulonglong, remaining=cython.ulonglong)
+cdef (unsigned long long, Py_ssize_t) _get_length(bytes buf, Py_ssize_t pos, Py_ssize_t end) except *
+
+@cython.locals(raw=cython.ulonglong)
+cdef (unsigned long long, Py_ssize_t) _get_raw(bytes buf, Py_ssize_t pos, Py_ssize_t end, int kind) except *
+
+@cython.locals(number=cython.longlong, enum_map=dict)
+cdef object _convert(int kind, unsigned long long raw, object sub)
+
+@cython.locals(value=cython.ulonglong, length=cython.ulonglong, size=cython.int)
+cdef Py_ssize_t _skip(bytes buf, Py_ssize_t pos, Py_ssize_t end, int wire) except -1
+
+cdef object _repeated_list(object msg, str attr, int kind, object sub)
+
+@cython.locals(index=dict, key=cython.ulonglong, wire=cython.int, field=tuple, number=cython.uint, attr=str,
+               kind=cython.int, label=cython.int, name=str, tag=bytes, length=cython.ulonglong,
+               raw=cython.ulonglong, stop=Py_ssize_t, expected=cython.int)
+cdef Py_ssize_t _decode_message(object msg, bytes buf, Py_ssize_t pos, Py_ssize_t end, int depth, int max_depth, bint strict) except -1
+
+cpdef decode(object msg, object data, int max_depth=*, bint strict=*)

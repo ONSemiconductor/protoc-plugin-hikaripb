@@ -1,0 +1,11 @@
+/*
+ * @page tools Tools
+ * The tools: the last titled file of a directory.
+ */
+
+syntax = "proto3";
+package pages.sub;
+
+message Tool {
+   uint32 id = 1;  // Identifier of the tool.
+}

@@ -1,0 +1,9 @@
+/* The only file of its directory: it is listed at the top level. */
+
+syntax = "proto3";
+package docs.single;
+
+// A lone message.
+message Lone {
+   uint32 value = 1;  // The value.
+}

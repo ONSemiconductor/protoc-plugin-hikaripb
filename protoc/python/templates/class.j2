@@ -1,0 +1,132 @@
+class {{ name }}(_codec.Message):
+    {% if comment %}
+    """ {{ comment }} """
+
+    {% endif %}
+    {# one slot per field; everything but plain scalars keeps its value in a private slot behind a property #}
+    __slots__ = ({% for f in fields %}"{{ f.attr }}", {% endfor %})
+    {# one list class per repeated message field: its add() takes the fields of the element as parameters #}
+    {% for f in fields if f.rpt and f.msg %}
+
+    class _list_{{ f.name }}(_codec.MessageList["{{ f.ref }}"]):
+        {% if f.doc %}
+        """ {{ f.doc }} """
+
+        {% endif %}
+        __slots__ = ()
+
+        def __init__(self, items=()):
+            super().__init__({{ f.ref }}, items)
+
+        def add(self{% for p in f.params %}, {{ p.name }}: {{ p.pytype }} = None{% endfor %}) -> {{ f.ref }}:
+            """
+            Create a new {{ f.ref }} from the given fields, append it and return it.
+            Args:
+                {% for p in f.params %}
+                {{ p.name }} ({{ p.pytype }}){{ ": " ~ p.doc if p.doc else "" }}
+                {% endfor %}
+            Returns:
+                {{ f.ref }}: the new element.
+            """
+            return super().add({% for p in f.params %}{{ p.name }}={{ p.name }}{{ ", " if not loop.last }}{% endfor %})
+    {% endfor %}
+    {% for f in fields if not f.prop %}
+
+    {{ f.name }}: {{ f.pytype }}
+    {% if f.doc %}
+    """ {{ f.doc }} """
+    {% endif %}
+    {% endfor %}
+
+    def __init__(self{% for f in fields %}, {{ f.name }}: {{ f.pytype }} = None{% endfor %}):
+        """
+        {{ comment or name }}
+        Args:
+        {% for f in fields %}
+            {{ f.name }} ({{ f.pytype }}){{ ": " ~ f.doc if f.doc else "" }}
+        {% endfor %}
+        """
+        self._presence = 0
+        {% for f in fields %}
+        {% if f.prop %}
+        self.{{ f.attr }} = None
+        if {{ f.name }} is not None:
+            self.{{ f.name }} = {{ f.name }}
+        {% else %}
+        self.{{ f.name }} = {{ f.zero }} if {{ f.name }} is None else {{ f.name }}
+        {% endif %}
+        {% endfor %}
+    {% for f in fields if f.prop %}
+
+    @property
+    def {{ f.name }}(self) -> {{ (name ~ "._list_" ~ f.name) if f.rpt and f.msg else f.optional_type }}:
+        {% if f.doc %}
+        """ {{ f.doc }} """
+        {% endif %}
+        {% if f.rpt %}
+        value = self.{{ f.attr }}
+        if value is None:
+            value = self.{{ f.attr }} = {{ ("self._list_" ~ f.name ~ "()") if f.msg else "[]" }}
+        return value
+        {% elif f.msg and not f.group %}
+        value = self.{{ f.attr }}
+        if value is None:
+            # read access creates an empty child that is only written once it is filled
+            value = self.{{ f.attr }} = {{ f.ref }}()
+        return value
+        {% elif f.explicit %}
+        return self.{{ f.attr }} if self._presence & {{ f.mask }} else None
+        {% else %}
+        return self.{{ f.attr }} if self._presence & {{ f.mask }} else {{ '""' if f.kind == "string" else 'b""' }}
+        {% endif %}
+
+    @{{ f.name }}.setter
+    def {{ f.name }}(self, value: {{ f.pytype }} | None) -> None:
+        {% if f.rpt %}
+        self.{{ f.attr }} = None if value is None else {{ ("self._list_" ~ f.name ~ "(value)") if f.msg else "list(value)" }}
+        {% else %}
+        if value is None:
+            self._presence &= ~{{ f.mask }}
+            {% if f.msg %}
+            self.{{ f.attr }} = None
+            {% endif %}
+        else:
+            {% if f.msg %}
+            if not isinstance(value, {{ f.ref }}):
+                raise TypeError("Expected {{ f.ref }} but got %s" % type(value).__name__)
+            {% endif %}
+            self.{{ f.attr }} = value
+            {% if f.group_mask %}
+            self._presence = (self._presence & ~{{ f.group_mask }}) | {{ f.mask }}
+            {% else %}
+            self._presence |= {{ f.mask }}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+    {% for f in fields if f.optional %}
+
+    def has_{{ f.name }}(self) -> bool:
+        """
+        Check if the optional field {{ f.name }} is set.
+        Returns:
+            bool: True if the field is set, False otherwise.
+        """
+        {% if f.rpt %}
+        return bool(self.{{ f.attr }})
+        {% elif f.msg and not f.group %}
+        value = self.{{ f.attr }}
+        return bool(self._presence & {{ f.mask }}) or (value is not None and bool(value.serialize()))
+        {% else %}
+        return bool(self._presence & {{ f.mask }})
+        {% endif %}
+    {% endfor %}
+    {% for g in groups %}
+
+    def has_{{ g.name }}(self) -> bool:
+        """
+        Check if any member of the oneof {{ g.name }} is set.
+        Returns:
+            bool: True if a member is set, False otherwise.
+        """
+        return bool(self._presence & {{ g.mask }})
+    {% endfor %}

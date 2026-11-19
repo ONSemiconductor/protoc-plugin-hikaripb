@@ -1,0 +1,355 @@
+/**
+ * @copyright @parblock
+ * Copyright (c) 2025 Semiconductor Components Industries, LLC ("onsemi")
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without modification, are permitted
+ * provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list of
+ *    conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this list of
+ *    conditions and the following disclaimer in the documentation and/or other materials provided
+ *    with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may be used to
+ *    endorse or promote products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+ * FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ * @endparblock
+ *
+ * @file    {{ p }}_defines.h
+ * @brief   Defines and structures used in the protobuf library.
+ *
+ * User can define the following macros in {{ p }}_config.h to customize the library. {{ p }}_config_default.h
+ * lists all of them with their defaults, the standard types and features among them:
+ * - {{ P }}_DEBUG: Enable or disable debug features (default: 0).
+ * - {{ P }}_ASSERT: Custom assert macro (default: no-op).
+ * - {{ P }}_PRINT and {{ P }}_PRINTLN: Custom print macros for debug output. Both must be defined to enable printing.
+ * - {{ P }}_PRINT_ENABLE: Master switch for printing; {{ P }}_PRINT/{{ P }}_PRINTLN are no-ops unless this is set (default: 0).
+ * - {{ P }}_CALLBACK: Enable or disable callback functionality (default: 0).
+ * - {{ P }}_ENABLE_REPEATED_BYTES: Support repeated string and bytes fields, a compile error otherwise (default: 0).
+ * - {{ P }}_ENABLE_FLOAT: Support float fields, a compile error otherwise (default: 0).
+ * - {{ P }}_COMPRESS_ENUMS: Store an enum in the smallest type that holds its largest value, in a pb_u32 otherwise (default: 1).
+ * - {{ P }}_CHARS_PER_LINE: Number of characters per line for printing (default: 16).
+ * - {{ P }}_INDENT_SIZE: Number of spaces for indentation in printing (default: 2).
+ * - {{ P }}_U8_F/{{ P }}_S8_F/{{ P }}_X8_F, {{ P }}_U16_F/{{ P }}_S16_F/{{ P }}_X16_F, {{ P }}_U32_F/{{ P }}_S32_F/{{ P }}_X32_F,
+ *   {{ P }}_FLOAT_F:
+ *   printf-style conversion specifiers (no leading '%') used by generated print() methods.
+ * - {{ P }}_CONTINUE_ON_OVERFLOW: Continue decoding on repeated field overflow (default: 0).
+ * - {{ P }}_CONTINUE_ON_CALLBACK_ERROR: Continue decoding on callback error (default: 0).
+ * - {{ P }}_CONTINUE_ON_ONEOF_ERROR: Continue decoding on oneof error (default: 0).
+ * - {{ P }}_ERROR_ON_UNKNOWN_TAG: Treat unknown tag as an error (default: 0).
+ * - {{ P }}_CONTINUE_ON_UNKNOWN_TAG_ERROR: Continue decoding on unknown tag error (default: 0).
+ * - {{ P }}_DEC_MAX_DEPTH: Maximum message nesting depth for decoding (default: 8).
+ * - {{ P }}_ENC_PAD_LENGTH: Number of reserved length-prefix bytes per length-delimited field (default: 2).
+ *
+ * @defgroup {{ config.doc_group_id }} {{ config.doc_group_title }}
+{% if config.doc_parent_group %} * @ingroup {{ config.doc_parent_group }}
+{% endif %} * @brief Protobuf-generated encoder/decoder support.
+ * @{
+ * @defgroup Defines Defines
+ * @ingroup {{ config.doc_group_id }}
+ * @brief Shared generated constants, wire types, and helper declarations.
+ * @{
+ */
+
+#ifndef {{ P }}_DEFINES_H
+#define {{ P }}_DEFINES_H
+
+#include "{{ config.config_path }}{{ p }}_config.h"
+#include "{{ config.include_path }}{{ p }}_types.h"
+
+{# the print macros of the user come first: one of them alone is a mistake, as it cannot print without the other #}
+#if defined({{ P }}_PRINTLN) && !defined({{ P }}_PRINT)
+#error "{{ P }}_PRINTLN is defined, but {{ P }}_PRINT is missing: define both to print"
+#endif
+
+#if defined({{ P }}_PRINT) && !defined({{ P }}_PRINTLN)
+#error "{{ P }}_PRINT is defined, but {{ P }}_PRINTLN is missing: define both to print"
+#endif
+
+#include "{{ config.include_path }}{{ p }}_config_default.h"
+
+{# a value that does not fit the types that hold it would corrupt the stream silently #}
+#if ({{ P }}_ENC_PAD_LENGTH < 1) || ({{ P }}_ENC_PAD_LENGTH > 5)
+#error "{{ P }}_ENC_PAD_LENGTH must be 1 to 5: the length of a field is a varint of at most 5 bytes"
+#endif
+
+/** The largest length of a field that the {{ P }}_ENC_PAD_LENGTH reserved bytes can hold. */
+#if {{ P }}_ENC_PAD_LENGTH >= 5
+#define {{ P }}_ENC_MAX_LENGTH 0xFFFFFFFFU
+#else
+#define {{ P }}_ENC_MAX_LENGTH ((static_cast<pb_u32>(1U) << (7U * {{ P }}_ENC_PAD_LENGTH)) - 1U)
+#endif
+
+#if ({{ P }}_DEC_MAX_DEPTH < 1) || ({{ P }}_DEC_MAX_DEPTH > 255)
+#error "{{ P }}_DEC_MAX_DEPTH must be 1 to 255: the decoder counts the depth in a pb_u8"
+#endif
+
+#if ({{ P }}_DEC_VARINT_UNROLL < 0) || ({{ P }}_DEC_VARINT_UNROLL > 5)
+#error "{{ P }}_DEC_VARINT_UNROLL must be 0 to 5: a varint has 5 bytes at most"
+#endif
+
+#if {{ P }}_CHARS_PER_LINE < 1
+#error "{{ P }}_CHARS_PER_LINE must be at least 1: the print functions print that many bytes per line"
+#endif
+
+// Master switch: {{ P }}_PRINT/{{ P }}_PRINTLN only take effect when enabled, even
+// if the user defined real ones above - matches the c backend's {{ P }}_PRINT_ENABLE.
+#if !{{ P }}_PRINT_ENABLE
+#undef {{ P }}_PRINT
+#undef {{ P }}_PRINTLN
+#define {{ P }}_PRINT(fmt, ...)
+#define {{ P }}_PRINTLN(fmt, ...)
+#endif
+
+#if {{ P }}_DEBUG
+#define {{ P }}_DBG_DEF(...) __VA_ARGS__
+#else
+#define {{ P }}_DBG_DEF(...)
+#endif
+
+namespace {{ p }} {
+
+// User-provided output stream class
+class OutputStream;
+// User-provided input stream class
+class InputStream;
+
+template <class S = InputStream>
+class Decoder;
+template <class S = OutputStream>
+class Encoder;
+
+// Wire types used in encoding
+enum WireType : pb_u8 {
+    VARINT = 0,
+    FIXED64 = 1,
+    LENGTH_DELIMITED = 2,
+    FIXED32 = 5,
+};
+
+// Types of items in messages
+enum ItemType : pb_u8 {
+    VARINT_32,   // varint
+    VARINT_16,   // pb_u16
+    VARINT_8,    // pb_u8
+    VARINT_S32,  // signed varint
+    BOOL,        // bool: every value but 0 is true
+    FIXED_32,    // float, signed or unsigned 32 bit int
+    MESSAGE,     // submessage
+    BYTES,       // string or bytes
+    MAX_TYPE,
+};
+
+// Error codes for decoder
+enum DecodeError : pb_u8 {
+    DECODER_OK = 0,             // no error
+    DECODER_UNKNOWN_WIRETYPE,   // received unknown wire type
+    DECODER_UNEXPECTED_EOF,     // unexpected end of input while decoding
+    DECODER_CALLBACK_ERROR,     // callback function returned error
+    DECODER_ONEOF_ERROR,        // multiple tags inside oneof union
+    DECODER_REPEATED_OVERFLOW,  // repeated field overflow
+    DECODER_BYTES_OVERFLOW,     // bytes/string field overflow
+    DECODER_VARINT_OVERFLOW,    // varint overflow (more than 5 bytes for 32 bit varint)
+    DECODER_UNKNOWN_TAG,        // received unknown tag
+    DECODER_DEPTH_EXCEEDED,     // message nesting exceeded {{ P }}_DEC_MAX_DEPTH
+};
+
+// The storage of a field is a part of a message: the descriptor of the field gives its offset, and the decoder reads and
+// writes the field through a pointer of its type. This is the only place that converts the pointer to an object into the
+// pointer to an object of another type (deviation from MISRA C++:2008 5-2-7, see the documentation): the layout of a message
+// is the one of the generated structure, so the conversion is well defined.
+template <typename To, typename From>
+inline To* pointer_cast(From* ptr) {
+    return static_cast<To*>(static_cast<void*>(ptr));  // NOLINT(bugprone-casting-through-void)
+}
+
+// The same for a pointer to a constant object
+template <typename To, typename From>
+inline const To* pointer_cast(const From* ptr) {
+    return static_cast<const To*>(static_cast<const void*>(ptr));  // NOLINT(bugprone-casting-through-void)
+}
+
+// The storage of a field: the pointer to its first byte in the message, as a pointer of its type
+template <typename T>
+inline T* field_at(pb_u8* storage) {
+    return pointer_cast<T>(storage);
+}
+
+// Wrapper for repeated array items: the length is followed by the elements, see data()
+struct ArrayWrapper {
+    pb_u32 len;  // length of the array
+
+    // the elements of the array, which follow the length
+    pb_u8* data() { return pointer_cast<pb_u8>(this + 1); }
+};
+
+// Wrapper for oneof union items: the tag is followed by the item, see data()
+struct UnionWrapper {
+    pb_u32 tag;  // tag of the union item
+
+    // the item of the union, which follows the tag
+    pb_u8* data() { return pointer_cast<pb_u8>(this + 1); }
+};
+
+// Base structure for messages to track used fields: the presence bitmap is the first member of a message
+struct MessageBase {
+    /**
+     * @brief Mark a field as used based on its tag.
+     * @param tag The tag of the field to mark as used.
+     */
+    void setUsed(pb_tag tag) {
+        pb_u8* bitmap = pointer_cast<pb_u8>(this);
+        const pb_u32 index = static_cast<pb_u32>(tag) >> 3U;
+        bitmap[index] = static_cast<pb_u8>(static_cast<pb_u32>(bitmap[index]) | (1U << (static_cast<pb_u32>(tag) & 0x07U)));
+    }
+
+    /**
+     * @brief Check if a field is used based on its tag.
+     * @param tag The tag of the field to check.
+     * @return true if the field is used, false otherwise.
+     */
+    bool isUsed(pb_tag tag) const {
+        const pb_u8* bitmap = pointer_cast<pb_u8>(this);
+        const pb_u32 index = static_cast<pb_u32>(tag) >> 3U;
+        return (static_cast<pb_u32>(bitmap[index]) & (1U << (static_cast<pb_u32>(tag) & 0x07U))) != 0U;
+    }
+};
+
+// Descriptor for a message item
+struct ItemDescriptor {
+    // The storage of a field that the decoder stores itself
+    struct Fixed {
+        pb_u16 size;  // size of the bytes or string or message
+        pb_u16 cnt;   // count of the repeated field
+    };
+    // The callback of a field: returns true if ok, false if error
+    using Callback = bool (*)(Decoder<>& decoder, const ItemDescriptor*, pb_u16, void**);
+    // A field has either storage or a callback, hasCallback tells which: the descriptor of every field stays the size of
+    // a pointer smaller than with both (a tagged union, deviation DEV-2)
+    union Which {
+        Fixed fixed;        // the storage, when hasCallback is false
+        Callback callback;  // the callback, when hasCallback is true
+
+        constexpr explicit Which(Fixed value) : fixed(value) {}
+        constexpr explicit Which(Callback value) : callback(value) {}
+    };
+
+    pb_u16 offset;    // offset in the message
+    pb_msgid id;      // id of submessage
+    pb_u8 type;       // type of the item
+    bool isRepeated;  // is the item repeated
+    bool isOneof;     // is the item part of oneof union
+    bool hasCallback; // does the item have callback
+    Which which;      // the storage or the callback
+};
+
+// Descriptor for a message type
+struct MessageDescriptor {
+    const {{ p }}::ItemDescriptor* (*getItemDescriptor)(pb_u32 tag);  // function to get item descriptor
+    void (*clear)({{ p }}::MessageBase* msg);                           // function to clear the message
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    const char* (*getTagName)(pb_u32 tag);  // function to get tag in readable format
+#endif
+};
+
+// Specialization of enable_if when condition is false
+template <bool, typename T = void>
+struct enable_if {};
+
+// Specialization when condition is true
+template <typename T>
+struct enable_if<true, T> {
+    using type = T;
+};
+
+/**
+ * @brief Print byte data in hexadecimal format with indentation.
+ * @param data Pointer to the byte data.
+ * @param len Length of the byte data.
+ * @param indent Number of spaces to indent.
+ */
+inline void print_bytes(const pb_u8* data, pb_u16 len, pb_u32 indent = 0U) {
+#if {{ P }}_PRINT_ENABLE
+    char line[(static_cast<pb_u32>({{ P }}_CHARS_PER_LINE) * 3U) + 1U];
+    const char* hexDigits = "0123456789ABCDEF";
+    pb_u32 data_idx = 0U;
+    pb_u32 remaining = static_cast<pb_u32>(len);
+
+    while (remaining != 0U) {
+        for (pb_u32 space = 0U; space < indent; space++) {
+            {{ P }}_PRINT(" ");
+        }
+
+        const pb_u32 chunk_size = (remaining > static_cast<pb_u32>({{ P }}_CHARS_PER_LINE)) ? static_cast<pb_u32>({{ P }}_CHARS_PER_LINE) : remaining;
+        for (pb_u32 i = 0U; i < chunk_size; i++) {
+            const pb_u32 value = static_cast<pb_u32>(data[data_idx]);
+            const pb_size pos = static_cast<pb_size>(i) * 3U;
+            line[pos] = hexDigits[(value >> 4U) & 0x0FU];
+            line[pos + 1U] = hexDigits[value & 0x0FU];
+            line[pos + 2U] = ' ';
+            data_idx++;
+        }
+        line[static_cast<pb_size>(chunk_size) * 3U] = '\0';
+        {{ P }}_PRINTLN("%s", line);
+        remaining -= chunk_size;
+    }
+#else
+    (void)data;
+    (void)len;
+    (void)indent;
+#endif
+}
+
+/**
+ * @brief Print string data with indentation.
+ * @param data Pointer to the string data.
+ * @param len Length of the string data.
+ * @param indent Number of spaces to indent.
+ */
+inline void print_string(const pb_u8* data, pb_u16 len, pb_u32 indent = 0U) {
+#if {{ P }}_PRINT_ENABLE
+    char line[static_cast<pb_u32>({{ P }}_CHARS_PER_LINE) + 1U];
+    pb_u32 data_idx = 0U;
+    pb_u32 remaining = static_cast<pb_u32>(len);
+
+    while (remaining != 0U) {
+        for (pb_u32 space = 0U; space < indent; space++) {
+            {{ P }}_PRINT(" ");
+        }
+
+        const pb_u32 chunk_size = (remaining > static_cast<pb_u32>({{ P }}_CHARS_PER_LINE)) ? static_cast<pb_u32>({{ P }}_CHARS_PER_LINE) : remaining;
+        for (pb_u32 i = 0U; i < chunk_size; i++) {
+            line[i] = static_cast<char>(data[data_idx]);
+            data_idx++;
+        }
+        line[chunk_size] = '\0';
+        {{ P }}_PRINTLN("%s", line);
+        remaining -= chunk_size;
+    }
+#else
+    (void)data;
+    (void)len;
+    (void)indent;
+#endif
+}
+
+}  // namespace {{ p }}
+
+/** @} */
+/** @} */
+
+#endif /* {{ P }}_DEFINES_H */
