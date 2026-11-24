@@ -3,3 +3,4 @@ build/
 *.gcov
 __pycache__/
 *.pyc
+.github/copilot-instructions.md
