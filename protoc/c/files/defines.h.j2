@@ -36,7 +36,8 @@
  * lists all of them with their defaults, the standard types and features among them:
  * - {{ P }}_DEBUG: Enable or disable debug features (default: 0).
  * - {{ P }}_ASSERT: Custom assert macro (default: no-op).
- * - {{ P }}_PRINT and {{ P }}_PRINTLN: Custom print macros for debug output. Both must be defined to enable printing.
+ * - {{ P }}_PRINT and {{ P }}_PRINTLN: Custom print macros for debug output. Both must be defined to enable printing; one of
+ *   them alone is a compile error.
  * - {{ P }}_CALLBACK: Enable or disable callback functionality (default: 0).
  * - {{ P }}_ENABLE_MULTI_ENC: Enable or disable support for multiple encoder contexts (default: 0).
  * - {{ P }}_ENABLE_MULTI_DEC: Enable or disable support for multiple decoder contexts (default: 0).
@@ -69,6 +70,16 @@
 {# the config of the user first, so that it can override every default; the standard types and features and the defaults follow #}
 #include "{{ config.config_path }}{{ p }}_config.h"
 #include "{{ config.include_path }}{{ p }}_types.h"
+
+{# the print macros of the user come before their defaults: one of them alone is a mistake, as it cannot print without the other #}
+#if defined({{ P }}_PRINTLN) && !defined({{ P }}_PRINT)
+#error "{{ P }}_PRINTLN is defined, but {{ P }}_PRINT is missing: define both to print"
+#endif
+
+#if defined({{ P }}_PRINT) && !defined({{ P }}_PRINTLN)
+#error "{{ P }}_PRINT is defined, but {{ P }}_PRINTLN is missing: define both to print"
+#endif
+
 #include "{{ config.include_path }}{{ p }}_config_default.h"
 
 {# a value that does not fit the types that hold it would corrupt the stream silently #}

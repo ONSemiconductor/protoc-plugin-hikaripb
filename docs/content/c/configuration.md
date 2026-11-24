@@ -92,7 +92,7 @@ a `CONTINUE_ON_...` setting let the decoder go on: do not use it.
 |---------|---------|-------------|
 | `HIKARIPB_DEBUG` | `0` | Enables checks for the development of the encoding code: the write handles use `HIKARIPB_ASSERT` to verify that data is written to the currently open handle and not to a parent or a closed handle. Combined with `HIKARIPB_PRINT_ENABLE`, the decoder also prints the names of the field and the message. |
 | `HIKARIPB_ASSERT(x)` | no-op | The assertion used by these checks. Define it as `assert(x)`, as a trap or as a logging call to make the checks effective. |
-| `HIKARIPB_PRINT_ENABLE`, `HIKARIPB_PRINT(...)`, `HIKARIPB_PRINTLN(...)` | disabled | Enables the `<message>_print()` functions. Both print macros must be provided, for example based on `printf` or a logging function. When disabled, `print()` compiles to nothing. |
+| `HIKARIPB_PRINT_ENABLE`, `HIKARIPB_PRINT(...)`, `HIKARIPB_PRINTLN(...)` | disabled | Enables the `<message>_print()` functions. Both print macros must be provided, for example based on `printf` or a logging function. Defining only one of them is a compile error. When disabled, `print()` compiles to nothing. |
 | `HIKARIPB_CHARS_PER_LINE`, `HIKARIPB_INDENT_SIZE` | `16`, `2` | The layout of `print()`: the number of bytes per line of a bytes field and the number of spaces per indentation level. |
 | `HIKARIPB_U8_F` ... `HIKARIPB_U32_F`, `HIKARIPB_S8_F` ... `HIKARIPB_S32_F`, `HIKARIPB_X8_F` ... `HIKARIPB_X32_F`, `HIKARIPB_FLOAT_F` | `"u"`, `"d"`, `"x"`, `"g"` | The `printf` conversion specifiers used by `print()`. Change them if `pb_u32` is a `long`, as on 16-bit targets (`"lu"`), or if the `printf` implementation does not support `g`. |
 
