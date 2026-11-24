@@ -79,7 +79,7 @@ static constexpr pb_u32 TAG_{{item.name|upper}} = {{item.tag}}U;
 
 {# Define methods to check for the presence of optional fields #}
 {% for o in optionals %}
-bool has_{{o.name}}() const{
+{{ P }}_INLINE_ATTR bool has_{{o.name}}() const{
 {% if o.group == "" %} {# If the optional field is not part of a oneof group, check the presence array #}
     return isUsed(static_cast<pb_tag>(TAG_{{o.name|upper}}));
 {% else %} {# If the optional field is part of a oneof group, check the tag of the group #}
@@ -90,7 +90,7 @@ bool has_{{o.name}}() const{
 {# Define methods to check for the presence of oneof fields #}
 {% for k,v in members.items() %}
 {% if k != "" %}
-bool has_{{k}}() const{
+{{ P }}_INLINE_ATTR bool has_{{k}}() const{
     return {{k}}_tag != 0U;
 }
 {% endif %}

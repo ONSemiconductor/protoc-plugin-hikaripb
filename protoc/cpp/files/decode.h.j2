@@ -424,7 +424,7 @@ class Decoder {
 
 #if {{ P }}_ENABLE_REPEATED_BYTES
     // A string or bytes element of a repeated field: each element is a {pb_u32 length; pb_u8 data[size]} struct, see message_item.j2
-    void decode_repeated_bytes(pb_u8* item_data, const ItemDescriptor* desc, pb_u16 len) {
+    {{ P }}_OPTIMIZE_ATTR void decode_repeated_bytes(pb_u8* item_data, const ItemDescriptor* desc, pb_u16 len) {
         ArrayWrapper* arr = field_at<ArrayWrapper>(item_data);
         bool overflow = true;
 
@@ -457,7 +457,7 @@ class Decoder {
 #endif
 
     // The elements of a packed repeated scalar field: all of them in one length-delimited field
-    void decode_packed_elements(const ItemDescriptor* desc, pb_u8* item_data, pb_u16 len) {
+    {{ P }}_OPTIMIZE_ATTR void decode_packed_elements(const ItemDescriptor* desc, pb_u8* item_data, pb_u16 len) {
         const pb_u32 end_offset = stream->getOffset() + len;
         bool stop = false;
 
@@ -498,7 +498,7 @@ class Decoder {
     }
 
     // A repeated field: the elements of a packed scalar field, else one element per field (message, string, bytes, unpacked scalar)
-    void decode_repeated_field(const ItemDescriptor* desc, pb_u8* item_data, pb_u8 wireType, pb_u16 len) {
+    {{ P }}_OPTIMIZE_ATTR void decode_repeated_field(const ItemDescriptor* desc, pb_u8* item_data, pb_u8 wireType, pb_u16 len) {
         if ((wireType != WireType::LENGTH_DELIMITED) || (desc->type >= ItemType::MESSAGE)) {
             if (use_callback(desc)) {
                 if (!run_callback(desc, len, item_data)) {
