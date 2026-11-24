@@ -67,6 +67,49 @@ static struct {{ p }}_DecodeContext g_decode_context;
 #define {{ P }}_DEC_NEEDS_SKIP_BYTES 0
 #endif
 
+{# the largest length of a string, bytes, embedded message or packed repeated field that the decoder reads: the reader
+   functions and the descriptors count in 16 bits #}
+#define {{ P }}_MAX_LEN 0xFFFFU
+
+{# the debug output of an error, when {{ P }}_DEBUG and {{ P }}_PRINT_ENABLE are 1: its text, then the names of the field and of
+   the message. The field is the one of curr_tag and curr_depth, which decode_msg() sets for every field that it reads #}
+static void report_field({{ P }}_DEC_CTX_DEF(const struct {{ p }}_DecodeContext* decoder_ctx,) const char* what) {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    const struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[{{ P }}_DEC_STATE(decoder_ctx)->curr_depth];
+
+    {{ P }}_PRINT("{{ P }}: %s %s", what, f->msg_desc->getTagName({{ P }}_DEC_STATE(decoder_ctx)->curr_tag));
+    {{ P }}_PRINTLN(" in message %s", {{ p }}_getMessageName(f->id));
+#else
+    {{ P }}_DEC_CTX_DEF((void)decoder_ctx;)
+    (void)what;
+#endif
+}
+
+{# an error of the message that is being decoded, not of one of its fields #}
+static void report_message({{ P }}_DEC_CTX_DEF(const struct {{ p }}_DecodeContext* decoder_ctx,) const char* what) {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    const struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[{{ P }}_DEC_STATE(decoder_ctx)->decode_depth];
+
+    {{ P }}_PRINTLN("{{ P }}: %s in message %s", what, {{ p }}_getMessageName(f->id));
+#else
+    {{ P }}_DEC_CTX_DEF((void)decoder_ctx;)
+    (void)what;
+#endif
+}
+
+{# a field that the schema does not know has no name: its field number is printed #}
+static void report_unknown_tag({{ P }}_DEC_CTX_DEF(const struct {{ p }}_DecodeContext* decoder_ctx,) pb_u32 tag) {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    const struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[{{ P }}_DEC_STATE(decoder_ctx)->decode_depth];
+
+    {{ P }}_PRINT("{{ P }}: received unknown tag %" {{ P }}_U32_F, tag);
+    {{ P }}_PRINTLN(" in message %s", {{ p }}_getMessageName(f->id));
+#else
+    {{ P }}_DEC_CTX_DEF((void)decoder_ctx;)
+    (void)tag;
+#endif
+}
+
 static inline {{ P }}_INLINE_ATTR void decode_item_inner({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
                                                          pb_u8* item_data,
                                                          const struct {{ p }}_ItemDescriptor* desc,
@@ -210,6 +253,7 @@ static {{ P }}_OPTIMIZE_ATTR void skip_type({{ P }}_DEC_CTX_DEF(struct {{ p }}_D
     } else {
         {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNKNOWN_WIRETYPE;
         {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        report_message({{ P }}_DEC_CTX_DEF(decoder_ctx,) "received unknown wire type");
     }
 }
 #endif
@@ -234,7 +278,7 @@ static inline {{ P }}_INLINE_ATTR pb_u16 decode_length({{ P }}_DEC_CTX_ONLY(stru
     const pb_u32 length = decode_uint32({{ P }}_DEC_CTX_DEF(decoder_ctx));
     pb_u16 result = 0U;
 
-    if (length > 0xFFFFU) {
+    if (length > {{ P }}_MAX_LEN) {
         // a longer field fits no storage, and truncating its length would make the decoder lose the field boundaries
         if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
             {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
@@ -279,8 +323,10 @@ static void decode_repeated_bytes({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeConte
 
     if (arr->len >= desc->which.fixed.cnt) {
         {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+        report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "overflow of repeated field");
     } else if (len > desc->which.fixed.size) {
         {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
+        report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "overflow of byte array");
     } else {
         // the struct is padded to the alignment of its pb_u32 member
         const pb_u32 mask = (pb_u32)sizeof(pb_u32) - 1U;
@@ -324,6 +370,25 @@ static inline pb_bool has_callback(const struct {{ p }}_ItemDescriptor* desc) {
 #endif
 }
 
+{# the callback of a field, true when it succeeded. A callback that decodes a submessage moves the field of the debug output to
+   the fields of the submessage: it is put back, an error of the callback is one of its own field #}
+static inline {{ P }}_INLINE_ATTR pb_bool run_callback({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
+                                                      const struct {{ p }}_ItemDescriptor* desc,
+                                                      pb_u16 len,
+                                                      pb_u8* item_data) {
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    const pb_u32 tag = {{ P }}_DEC_STATE(decoder_ctx)->curr_tag;
+    const pb_u8 depth = {{ P }}_DEC_STATE(decoder_ctx)->curr_depth;
+    const pb_bool done = desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data));
+
+    {{ P }}_DEC_STATE(decoder_ctx)->curr_tag = tag;
+    {{ P }}_DEC_STATE(decoder_ctx)->curr_depth = depth;
+    return done;
+#else
+    return desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data));
+#endif
+}
+
 {# a field that is not repeated: a callback, a bytes or string, a message or a scalar #}
 static inline {{ P }}_INLINE_ATTR void decode_single_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx,)
                                                            const struct {{ p }}_ItemDescriptor* desc,
@@ -334,8 +399,9 @@ static inline {{ P }}_INLINE_ATTR void decode_single_field({{ P }}_DEC_CTX_DEF(s
     (void)wireType;
 #endif
     if (has_callback(desc) != PB_FALSE) {
-        if ({{ P }}_UNLIKELY(desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data)) == PB_FALSE)) {
+        if ({{ P }}_UNLIKELY(run_callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, item_data) == PB_FALSE)) {
             {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+            report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "callback error when decoding");
 #if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
             skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
 #else
@@ -349,6 +415,7 @@ static inline {{ P }}_INLINE_ATTR void decode_single_field({{ P }}_DEC_CTX_DEF(s
             arr->len = (pb_u32)len;
         } else {
             {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_BYTES_OVERFLOW;
+            report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "overflow of byte array");
 #if {{ P }}_CONTINUE_ON_OVERFLOW
             skip_bytes({{ P }}_DEC_CTX_DEF(decoder_ctx,) len);
 #else
@@ -372,11 +439,12 @@ static void decode_packed_elements({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeCont
            ({{ P }}_DEC_STATE(decoder_ctx)->eof == PB_FALSE)) {
         if (has_callback(desc) != PB_FALSE) {
             const pb_u32 offset_before = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx));
-            const pb_bool done = desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, 0U, (void**)(item_data));
+            const pb_bool done = run_callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, 0U, item_data);
 
             // a callback that does not read its element would be called again for ever
             if ((done == PB_FALSE) || ({{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) == offset_before)) {
                 {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+                report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "callback error when decoding");
                 stop = PB_TRUE;
 #if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
                 skip_packed_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) end_offset);
@@ -391,6 +459,7 @@ static void decode_packed_elements({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeCont
                 arr->len++;
             } else {
                 {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+                report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "overflow of repeated field");
                 stop = PB_TRUE;
 #if {{ P }}_CONTINUE_ON_OVERFLOW
                 skip_packed_rest({{ P }}_DEC_CTX_DEF(decoder_ctx,) end_offset);
@@ -410,8 +479,9 @@ static void decode_repeated_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeConte
                                   pb_u16 len) {
     if ((wireType != (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) || (desc->type >= (pb_u8){{ P }}_ITEM_MESSAGE)) {
         if (has_callback(desc) != PB_FALSE) {
-            if (desc->which.callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, (void**)(item_data)) == PB_FALSE) {
+            if (run_callback({{ P }}_DEC_CTX_DEF(decoder_ctx,) desc, len, item_data) == PB_FALSE) {
                 {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_CALLBACK_ERROR;
+                report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "callback error when decoding");
 #if {{ P }}_CONTINUE_ON_CALLBACK_ERROR
                 skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
 #else
@@ -431,6 +501,7 @@ static void decode_repeated_field({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeConte
                 arr->len++;
             } else {
                 {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_REPEATED_OVERFLOW;
+                report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "overflow of repeated field");
 #if {{ P }}_CONTINUE_ON_OVERFLOW
                 skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
 #else
@@ -460,6 +531,7 @@ static inline {{ P }}_INLINE_ATTR void decode_known_field({{ P }}_DEC_CTX_DEF(st
             item_data = {{ p }}_UnionWrapper_data(oneof_wrapper);
         } else {
             {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_ONEOF_ERROR;
+            report_field({{ P }}_DEC_CTX_DEF(decoder_ctx,) "duplicated tag");
 #if {{ P }}_CONTINUE_ON_ONEOF_ERROR
             skip_type({{ P }}_DEC_CTX_DEF(decoder_ctx,) wireType, len);
 #else
@@ -492,6 +564,7 @@ static inline {{ P }}_INLINE_ATTR void decode_msg_field({{ P }}_DEC_CTX_DEF(stru
 
     // a field that has another wire type than its descriptor has is not a field of the message: unknown
     if ({{ P }}_UNLIKELY((desc == PB_NULL) || (wire_type_matches(desc, wireType) == PB_FALSE))) {
+        report_unknown_tag({{ P }}_DEC_CTX_DEF(decoder_ctx,) tag);
 #if {{ P }}_ERROR_ON_UNKNOWN_TAG
         if ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK) {
             {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNKNOWN_TAG;
@@ -539,6 +612,7 @@ static {{ P }}_OPTIMIZE_ATTR void decode_msg({{ P }}_DEC_CTX_ONLY(struct {{ p }}
             if ({{ P }}_DEC_STATE(decoder_ctx)->eof != PB_FALSE) {
                 if ((f->max_offset != (pb_u32)0xFFFFFFFFUL) && ({{ P }}_DEC_STATE(decoder_ctx)->error == {{ P }}_DECODER_OK)) {
                     {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_UNEXPECTED_EOF;
+                    report_message({{ P }}_DEC_CTX_DEF(decoder_ctx,) "unexpected end of stream");
                 }
                 running = PB_FALSE;
             } else {
@@ -547,6 +621,10 @@ static {{ P }}_OPTIMIZE_ATTR void decode_msg({{ P }}_DEC_CTX_ONLY(struct {{ p }}
                 const pb_u8 wireType = (pb_u8)(val & 0x07U);
                 pb_u16 len = 0U;
 
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+                {{ P }}_DEC_STATE(decoder_ctx)->curr_tag = tag;
+                {{ P }}_DEC_STATE(decoder_ctx)->curr_depth = depth;
+#endif
                 if (wireType == (pb_u8){{ P }}_WIRE_LENGTH_DELIMITED) {
                     len = decode_length({{ P }}_DEC_CTX_DEF(decoder_ctx));
                 }
@@ -571,12 +649,16 @@ static void tb_msg({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ctx
     if (new_depth >= (pb_u8){{ P }}_DEC_MAX_DEPTH) {
         {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_DEPTH_EXCEEDED;
         {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_TRUE;
+        report_message({{ P }}_DEC_CTX_DEF(decoder_ctx,) "message nesting exceeded the maximum depth");
     } else {
         struct {{ p }}_decodeFrame* f = &{{ P }}_DEC_STATE(decoder_ctx)->decode_stack[new_depth];
 
         f->msg = item_data;
         f->max_offset = {{ p }}_getReadOffset({{ P }}_DEC_CTX_DEF(decoder_ctx->io_ctx)) + len;
         f->msg_desc = {{ p }}_getMessageDescriptor(id);
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+        f->id = id;
+#endif
         f->msg_desc->clear(item_data);
         {{ P }}_DEC_STATE(decoder_ctx)->decode_depth = new_depth;
     }
@@ -674,6 +756,11 @@ void {{ p }}_decode({{ P }}_DEC_CTX_DEF(struct {{ p }}_DecodeContext* decoder_ct
     {{ P }}_DEC_STATE(decoder_ctx)->eof = PB_FALSE;
     {{ P }}_DEC_STATE(decoder_ctx)->error = {{ P }}_DECODER_OK;
     {{ P }}_DEC_STATE(decoder_ctx)->decode_depth = 0U;
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    {{ P }}_DEC_STATE(decoder_ctx)->curr_tag = 0U;
+    {{ P }}_DEC_STATE(decoder_ctx)->curr_depth = 0U;
+    f->id = msgID;
+#endif
     f->msg = (pb_u8*)msg;
     f->msg_desc = {{ p }}_getMessageDescriptor(msgID);
     f->max_offset = (pb_u32)0xFFFFFFFFUL;

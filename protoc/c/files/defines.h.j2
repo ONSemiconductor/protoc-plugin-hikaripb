@@ -252,6 +252,9 @@ struct {{ p }}_decodeFrame {
     pb_u8*                                  msg;        /**< decoded message buffer */
     const struct {{ p }}_MessageDescriptor* msg_desc;   /**< descriptor for this level */
     pb_u32                                  max_offset; /**< read-offset limit; 0xFFFFFFFF = no bound */
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    pb_msgid                                id;         /**< message id, names the message in the debug output */
+#endif
 };
 
 /**
@@ -266,6 +269,12 @@ struct {{ p }}_DecodeContext {
     enum {{ p }}_DecodeError error;
     /** Explicit decode stack — avoids recursion for nested messages. */
     struct {{ p }}_decodeFrame decode_stack[{{ P }}_DEC_MAX_DEPTH];
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    /** Field number of the field that is being decoded, names it in the debug output. */
+    pb_u32  curr_tag;
+    /** Index in decode_stack of the message of that field. */
+    pb_u8   curr_depth;
+#endif
     /** User-provided reader state. */
     {{ P }}_DEC_CTX_DEF(void* io_ctx;)
 };
@@ -286,6 +295,10 @@ static inline struct {{ p }}_DecodeContext {{ p }}_DecodeContext_create({{ P }}_
     ctx.eof = PB_FALSE;
     ctx.decode_depth = 0U;
     ctx.error = {{ P }}_DECODER_OK;
+#if {{ P }}_DEBUG && {{ P }}_PRINT_ENABLE
+    ctx.curr_tag = 0U;
+    ctx.curr_depth = 0U;
+#endif
     {{ P }}_DEC_CTX_DEF(ctx.io_ctx = io_ctx;)
 
     return ctx;
